@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#1c222e" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Hex Arena — Đấu trường Lục giác</title>
+  <link rel="stylesheet" href="/src/styles/main.css" />
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+
+  <!-- IN-MATCH TOP HUD BAR (Hidden while in Lobby) -->
+  <header id="topBar" class="hud-top hidden">
+    <div class="hud-top-left">
+      <div class="hp-panel hp-player">
+        <div class="hp-header">
+          <span class="hp-label cyan">BẠN</span>
+          <span id="playerHpText" class="hp-value">1000 / 1000</span>
+        </div>
+        <div class="hp-track">
+          <div id="playerHpBar" class="hp-fill cyan" style="width: 100%"></div>
+        </div>
+        <div id="playerStanceTag" class="stance-sub">Đơn lẻ · 7 mảnh</div>
+      </div>
+
+      <!-- Desktop PC Quick Rotation / Scale Pills -->
+      <div id="pcQuickPanels" class="pc-quick-group">
+        <div class="pill-box" id="pcRotBox">
+          <span class="pill-title">XOAY TRỤC <kbd id="kbdRotHint">Q</kbd></span>
+          <div class="pill-row">
+            <button class="pill-btn" data-rot="static">Tĩnh</button>
+            <button class="pill-btn" data-rot="normal">Pháp tuyến</button>
+            <button class="pill-btn" data-rot="random">Ngẫu nhiên</button>
+          </div>
+        </div>
+        <div class="pill-box" id="pcScaleBox">
+          <span class="pill-title">CO GIÃN <kbd id="kbdScaleHint">E</kbd></span>
+          <div class="pill-row">
+            <button class="pill-btn" data-scale="0.6">60%</button>
+            <button class="pill-btn" data-scale="1">100%</button>
+            <button class="pill-btn" data-scale="1.5">150%</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="hud-top-center">
+      <div class="timer-row">
+        <div class="timer-pill">
+          <span id="matchTimer">10:00</span>
+        </div>
+        <div id="pingBadge" class="ping-pill hidden">Ping: -- ms</div>
+      </div>
+      <div class="action-bar">
+        <button id="btnLobby" class="icon-btn">Sảnh</button>
+        <button id="btnLoadout" class="icon-btn accent-cyan">Vũ khí</button>
+        <button id="btnCustomize" class="icon-btn accent-purple">Điều khiển</button>
+        <button id="btnModeToggle" class="icon-btn">Chế độ: PC</button>
+        <button id="btnFullscreen" class="icon-btn">Toàn màn hình</button>
+        <button id="btnSound" class="icon-btn">Âm: Bật</button>
+        <button id="btnHelp" class="icon-btn">Hướng dẫn</button>
+        <button id="btnRestart" class="icon-btn">Đấu lại</button>
+      </div>
+    </div>
+
+    <div class="hud-top-right">
+      <div class="hp-panel hp-enemy">
+        <div class="hp-header">
+          <span id="enemyHpText" class="hp-value">1000 / 1000</span>
+          <span class="hp-label rose">BOT AI</span>
+        </div>
+        <div class="hp-track">
+          <div id="enemyHpBar" class="hp-fill rose" style="width: 100%"></div>
+        </div>
+        <div id="enemyStanceTag" class="stance-sub right">Đánh xa · 7 mảnh</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- TOAST NOTIFICATION -->
+  <div id="toastBanner" class="toast hidden"></div>
+
+  <!-- PRE-MATCH 3-2-1 COUNTDOWN OVERLAY -->
+  <div id="matchCountdownOverlay" class="countdown-overlay hidden">
+    <div class="countdown-stage">
+      <div class="countdown-ring"></div>
+      <div id="countdownNumber" class="countdown-num">3</div>
+      <div id="countdownSub" class="countdown-sub">CHUẨN BỊ GIAO CHIẾN</div>
+    </div>
+  </div>
+
+  <!-- LOBBY & MODALS MOUNT POINT -->
+  <div id="lobbyRoot"></div>
+  <div id="modalRoot"></div>
+
+  <!-- MATCH OVER OVERLAY -->
+  <div id="matchOverOverlay" class="overlay hidden">
+    <div class="modal-card compact">
+      <div id="matchOverTitle" class="match-over-title">CHIẾN THẮNG</div>
+      <p id="matchOverDesc" class="match-over-desc"></p>
+      <div class="modal-actions center">
+        <button id="btnPlayAgain" class="btn primary">Đấu lại</button>
+        <button id="btnOverLoadout" class="btn">Cấu hình vũ khí</button>
+        <button id="btnOverLobby" class="btn">Về sảnh</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
