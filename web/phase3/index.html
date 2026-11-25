@@ -57,10 +57,12 @@
 
     <div class="hud-top-center">
       <div class="timer-row">
+        <div id="spectateBadge" class="spectate-pill hidden">TRỰC TIẾP</div>
         <div class="timer-pill">
           <span id="matchTimer">10:00</span>
         </div>
         <div id="pingBadge" class="ping-pill hidden">Ping: -- ms</div>
+        <div id="viewerBadge" class="viewer-pill hidden">0 đang xem</div>
       </div>
       <div class="action-bar">
         <button id="btnLobby" class="icon-btn">Sảnh</button>
@@ -71,6 +73,7 @@
         <button id="btnFullscreen" class="icon-btn">Toàn màn hình</button>
         <button id="btnSound" class="icon-btn desktop-only-btn">Âm: Bật</button>
         <button id="btnHelp" class="icon-btn desktop-only-btn">Hướng dẫn</button>
+        <button id="btnBotToggle" class="icon-btn" title="Bật/tắt AI Bot để đứng yên test kỹ năng">Bot: Bật</button>
         <button id="btnRestart" class="icon-btn">Đấu lại</button>
       </div>
     </div>
@@ -136,6 +139,7 @@
   <!-- LOBBY & MODALS MOUNT POINT -->
   <div id="lobbyRoot"></div>
   <div id="modalRoot"></div>
+  <div id="inviteToastRoot" class="invite-toast-root"></div>
 
   <!-- MATCH OVER OVERLAY -->
   <div id="matchOverOverlay" class="overlay hidden">

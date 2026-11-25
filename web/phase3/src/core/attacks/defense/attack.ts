@@ -1,12 +1,15 @@
+import { isDefenseFortressActive, isDefenseHexWallActive } from '../../world/structure';
 import type { AttackExecuteContext } from '../types';
 import { triggerShieldCounterPulse } from './specials/counterFortress';
+import { spawnHexWall } from './specials/hexWall';
 
-export function executeDefenseAttack({ state, fighter, applyHexDurabilityLoss }: AttackExecuteContext): void {
-  // Defense Stance is PURE DEFENSE: cannot execute a normal attack!
-  // Only when Pháo Đài Phản Xung (Defense Special) is active can the player unleash the damaging Counter-Pulse.
-  if (fighter.specialActive?.type === 'defense' && applyHexDurabilityLoss) {
+export function executeDefenseAttack({ state, fighter, angle, applyHexDurabilityLoss }: AttackExecuteContext): void {
+  // Defense Stance cannot attack normally; only active Defense specials trigger here:
+  if (isDefenseFortressActive(fighter) && applyHexDurabilityLoss) {
     const opp = fighter.id === 'player' ? state.enemy : state.player;
     triggerShieldCounterPulse(state, fighter, opp, applyHexDurabilityLoss);
     fighter.attackCooldown = 0.35;
+  } else if (isDefenseHexWallActive(fighter)) {
+    spawnHexWall(state, fighter, angle);
   }
 }

@@ -21,14 +21,18 @@ export class TopBarController {
   private enemyHpBar = document.getElementById('enemyHpBar')!;
   private enemyStanceTag = document.getElementById('enemyStanceTag')!;
   private matchTimer = document.getElementById('matchTimer')!;
+  private spectateBadge = document.getElementById('spectateBadge')!;
   private pingBadge = document.getElementById('pingBadge')!;
+  private viewerBadge = document.getElementById('viewerBadge')!;
   private pcQuickPanels = document.getElementById('pcQuickPanels')!;
   private pcRotBox = document.getElementById('pcRotBox')!;
   private kbdRotHint = document.getElementById('kbdRotHint')!;
   private kbdScaleHint = document.getElementById('kbdScaleHint')!;
+  private btnLobby = document.getElementById('btnLobby')!;
   private btnModeToggle = document.getElementById('btnModeToggle')!;
   private btnFullscreen = document.getElementById('btnFullscreen')!;
   private btnSound = document.getElementById('btnSound')!;
+  private btnBotToggle = document.getElementById('btnBotToggle')!;
   private btnLoadout = document.getElementById('btnLoadout')!;
   private btnRestart = document.getElementById('btnRestart')!;
   private btnPlayAgain = document.getElementById('btnPlayAgain')!;
@@ -56,6 +60,7 @@ export class TopBarController {
     onOpenSettings: () => void;
     onToggleMode: () => void;
     onToggleSound: () => boolean;
+    onToggleBot: () => boolean;
     onOpenHelp: () => void;
     onShowIOSGuide?: () => void;
     onRestart: () => void;
@@ -76,6 +81,10 @@ export class TopBarController {
     this.btnSound.addEventListener('click', () => {
       const enabled = opts.onToggleSound();
       this.btnSound.textContent = enabled ? 'Âm: Bật' : 'Âm: Tắt';
+    });
+    this.btnBotToggle.addEventListener('click', () => {
+      const paused = opts.onToggleBot();
+      this.setBotPaused(paused);
     });
     document.getElementById('btnHelp')?.addEventListener('click', opts.onOpenHelp);
     this.btnRestart.addEventListener('click', opts.onRestart);
@@ -122,9 +131,46 @@ export class TopBarController {
     this.enemyLabelEl.textContent = isPvP ? oppDisplay : 'BOT AI';
     this.btnLoadout.classList.toggle('hidden', isPvP);
     this.btnOverLoadout.classList.toggle('hidden', isPvP);
+    this.btnBotToggle.classList.toggle('hidden', isPvP);
     this.pingBadge.classList.toggle('hidden', !isPvP);
     this.btnRestart.textContent = isPvP ? 'Tái đấu' : 'Đấu lại';
     this.btnPlayAgain.textContent = isPvP ? 'Tái đấu PvP' : 'Đấu lại';
+  }
+
+  public setBotPaused(paused: boolean): void {
+    this.btnBotToggle.textContent = paused ? 'Bot: Tắt' : 'Bot: Bật';
+    this.btnBotToggle.classList.toggle('bot-paused', paused);
+  }
+
+  public setSpectateMode(
+    active: boolean,
+    targetName?: string,
+    oppName?: string,
+    mode?: 'pvp' | 'bot',
+  ): void {
+    this.topBarEl.classList.toggle('spectating', active);
+    this.spectateBadge.classList.toggle('hidden', !active);
+    this.btnLobby.textContent = active ? 'Rời xem' : 'Sảnh';
+    if (active) {
+      this.spectateBadge.textContent = mode === 'bot' ? 'TRỰC TIẾP · BOT' : 'TRỰC TIẾP · PvP';
+      this.playerLabelEl.textContent = (targetName || 'BẠN BÈ').toUpperCase();
+      this.enemyLabelEl.textContent = (oppName || 'ĐỐI THỦ').toUpperCase();
+      this.pingBadge.classList.add('hidden');
+      this.viewerBadge.classList.add('hidden');
+      this.btnPlayAgain.classList.add('hidden');
+      this.btnOverLoadout.classList.add('hidden');
+    } else {
+      this.btnPlayAgain.classList.remove('hidden');
+    }
+  }
+
+  public setViewerCount(count: number): void {
+    if (count > 0 && !this.topBarEl.classList.contains('spectating')) {
+      this.viewerBadge.textContent = `${count} đang xem`;
+      this.viewerBadge.classList.remove('hidden');
+    } else {
+      this.viewerBadge.classList.add('hidden');
+    }
   }
 
   public showCountdown(value: number): void {
@@ -241,9 +287,24 @@ export class TopBarController {
     }, 2400);
   }
 
-  public showMatchOver(state: MatchState, playerWon: boolean | null): void {
+  public showMatchOver(
+    state: MatchState,
+    playerWon: boolean | null,
+    spectateLabels?: { targetName: string; oppName: string },
+  ): void {
     this.matchOverOverlay.classList.remove('hidden');
-    if (playerWon === true) {
+    if (spectateLabels) {
+      if (playerWon === true) {
+        this.matchOverTitle.textContent = `${spectateLabels.targetName.toUpperCase()} THẮNG`;
+        this.matchOverTitle.style.color = '#38bdf8';
+      } else if (playerWon === false) {
+        this.matchOverTitle.textContent = `${spectateLabels.oppName.toUpperCase()} THẮNG`;
+        this.matchOverTitle.style.color = '#fb7185';
+      } else {
+        this.matchOverTitle.textContent = 'HÒA TRẬN';
+        this.matchOverTitle.style.color = '#fbbf24';
+      }
+    } else if (playerWon === true) {
       this.matchOverTitle.textContent = 'CHIẾN THẮNG';
       this.matchOverTitle.style.color = '#38bdf8';
     } else if (playerWon === false) {
@@ -377,7 +438,7 @@ export function renderHelpModal(mount: HTMLElement, pcConfig: PCControlConfig, o
                 <li><strong>${formatKeyLabel(kb.moveUp)}${formatKeyLabel(kb.moveLeft)}${formatKeyLabel(kb.moveDown)}${formatKeyLabel(kb.moveRight)}</strong>: Di chuyển · <strong>${formatKeyLabel(kb.dash)}</strong>: Lướt (3.5s)</li>
                 <li><strong>${formatKeyLabel(kb.formLoose)} / ${formatKeyLabel(kb.formSlot1)} / ${formatKeyLabel(kb.formSlot2)} / ${formatKeyLabel(kb.formSlot3)}</strong> hoặc <strong>${formatKeyLabel(kb.cycleForm)}</strong>: Đổi Đơn lẻ &amp; 3 Cấu hình</li>
                 <li><strong>${formatKeyLabel(kb.cycleRot)}</strong>: Đổi Xoay trục · <strong>${formatKeyLabel(kb.cycleScale)}</strong> ${pcConfig.mouseWheelScale ? '/ Cuộn chuột' : ''}: Đổi Co giãn</li>
-                <li><strong>${formatKeyLabel(kb.cycleFire)}</strong>: Kiểu phóng · <strong>${formatKeyLabel(kb.selectAll)}</strong>: Chọn/Bỏ hết mảnh · <strong>${formatKeyLabel(kb.special)}</strong>: Chiêu Đặc biệt</li>
+                <li><strong>${formatKeyLabel(kb.cycleFire)}</strong>: Kiểu phóng · <strong>${formatKeyLabel(kb.selectAll)}</strong>: Chọn/Bỏ hết mảnh · <strong>${formatKeyLabel(kb.special)}</strong>: Dùng Ulti · <strong>${formatKeyLabel(kb.cycleSpecial)}</strong>: Đổi Ulti (Giữ mở vòng)</li>
                 <li><strong>Chuột trái</strong>: Đánh / Click bay qua (Ngự Thương) · <strong>Chuột phải</strong>: Thu hồi / Thu mảnh dưới chuột / Hủy ngắm</li>
               </ul>
             </div>

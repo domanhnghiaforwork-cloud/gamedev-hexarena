@@ -1,9 +1,9 @@
 import { DASH_COOLDOWN, DASH_DURATION, DASH_SPEED, PLAYER_RADIUS } from '../constants';
-import { applyBlueprintFormation, isHexStolen, isSlotKey } from '../world/structure';
+import { applyBlueprintFormation, isDefenseFortressActive, isHexStolen, isSlotKey } from '../world/structure';
 import type { Fighter, FormKey, MatchState, RotMode, ScaleTier } from '../types';
 
 export function setFighterScale(state: MatchState, fighter: Fighter, scaleVal: ScaleTier): void {
-  if (fighter.specialActive?.type === 'defense') {
+  if (isDefenseFortressActive(fighter)) {
     if (!fighter.isAI) {
       state.events.push({ type: 'toast', message: 'Pháo Đài đang giữ kích thước 150%!', target: fighter.id });
     }
@@ -78,7 +78,7 @@ export function setFighterForm(state: MatchState, fighter: Fighter, newForm: For
 
 export function executeFighterDash(state: MatchState, fighter: Fighter, angle: number): boolean {
   if (fighter.dashCooldown > 0 || fighter.dashTimer > 0) return false;
-  if (fighter.specialActive?.type === 'defense') {
+  if (isDefenseFortressActive(fighter)) {
     if (!fighter.isAI) {
       state.events.push({ type: 'sfx', kind: 'cancel' });
       state.events.push({ type: 'toast', message: 'Đang bật Pháo Đài — không thể Lướt!', target: fighter.id });

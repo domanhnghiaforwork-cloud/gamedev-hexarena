@@ -3,7 +3,8 @@ import { STANCE_META } from '@attacks/index';
 import { axialKey, axialToLocal } from '@core/math/hexMath';
 import type { MaterialId, PlayerLoadout, SlotKey, WeaponBlueprint } from '@core/types';
 import type { InputMode } from '@input/inputManager';
-import type { AuthUser } from '@net/authClient';
+import type { AuthUser, FriendRequestRecord } from '@net/authClient';
+import type { FriendPresenceItem, FriendStatus } from '@net/protocol';
 import { drawHexPolygon } from '@render/world/arenaRenderer';
 import { FULLSCREEN_CHANGE_EVENT, isDocumentFullscreen, toggleFullscreenLandscape } from '@ui/common/fullscreen';
 
@@ -35,6 +36,32 @@ export interface LobbyPvPState {
   busy: boolean;
 }
 
+export interface LobbySocialState {
+  friends: FriendPresenceItem[];
+  incoming: FriendRequestRecord[];
+  outgoing: FriendRequestRecord[];
+  loading: boolean;
+  feedbackMsg: { text: string; isError: boolean } | null;
+}
+
+const STATUS_LABELS: Record<FriendStatus, string> = {
+  playing_pvp: 'Đang đấu PvP',
+  playing_bot: 'Đang đấu Bot',
+  in_room: 'Trong phòng PvP',
+  lobby: 'Ở sảnh',
+  spectating: 'Đang xem trận',
+  offline: 'Ngoại tuyến',
+};
+
+const SVG_FRIENDS_ICON = `
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+    <circle cx="9" cy="7" r="4"/>
+    <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
+    <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+  </svg>
+`;
+
 export class LobbyScreen {
   private mount: HTMLElement;
   private onPlayBot: () => void;
@@ -49,6 +76,24 @@ export class LobbyScreen {
   private onShowIOSGuide?: () => void;
   private onPvPTabChange: (tab: 'bot' | 'pvp') => void;
   private onJoinCodeInput: (code: string) => void;
+  private onSendFriendRequest: (username: string) => Promise<void>;
+  private onRespondFriendRequest: (requestId: number, accept: boolean) => Promise<void>;
+  private onRemoveFriend: (friendUserId: number) => Promise<void>;
+  private onSpectateFriend: (friendUserId: number) => void;
+  private onInviteFriend: (friendUserId: number) => void;
+
+  private sidebarCollapsed = false;
+  private mobileDrawerOpen = false;
+  private addFriendDraft = '';
+  private confirmRemoveId: number | null = null;
+  private lastSocial: LobbySocialState = {
+    friends: [],
+    incoming: [],
+    outgoing: [],
+    loading: false,
+    feedbackMsg: null,
+  };
+  private lastUser: AuthUser | null = null;
 
   constructor(opts: {
     mount: HTMLElement;
@@ -64,6 +109,11 @@ export class LobbyScreen {
     onShowIOSGuide?: () => void;
     onPvPTabChange: (tab: 'bot' | 'pvp') => void;
     onJoinCodeInput: (code: string) => void;
+    onSendFriendRequest: (username: string) => Promise<void>;
+    onRespondFriendRequest: (requestId: number, accept: boolean) => Promise<void>;
+    onRemoveFriend: (friendUserId: number) => Promise<void>;
+    onSpectateFriend: (friendUserId: number) => void;
+    onInviteFriend: (friendUserId: number) => void;
   }) {
     this.mount = opts.mount;
     this.onPlayBot = opts.onPlayBot;
@@ -78,6 +128,11 @@ export class LobbyScreen {
     this.onShowIOSGuide = opts.onShowIOSGuide;
     this.onPvPTabChange = opts.onPvPTabChange;
     this.onJoinCodeInput = opts.onJoinCodeInput;
+    this.onSendFriendRequest = opts.onSendFriendRequest;
+    this.onRespondFriendRequest = opts.onRespondFriendRequest;
+    this.onRemoveFriend = opts.onRemoveFriend;
+    this.onSpectateFriend = opts.onSpectateFriend;
+    this.onInviteFriend = opts.onInviteFriend;
 
     document.addEventListener(FULLSCREEN_CHANGE_EVENT, () => {
       const fsBtn = this.mount.querySelector<HTMLButtonElement>('#lobbyFsBtn');
@@ -90,9 +145,21 @@ export class LobbyScreen {
     });
   }
 
-  public show(loadout: PlayerLoadout, mode: InputMode, pvp: LobbyPvPState, user: AuthUser | null): void {
+  public show(
+    loadout: PlayerLoadout,
+    mode: InputMode,
+    pvp: LobbyPvPState,
+    user: AuthUser | null,
+    social?: LobbySocialState,
+  ): void {
+    this.lastUser = user;
+    if (social) {
+      this.lastSocial = social;
+    }
     const n = loadout.hexMaterials.length;
     const isFs = isDocumentFullscreen();
+    const onlineCount = this.lastSocial.friends.filter((f) => f.status !== 'offline').length;
+    const reqCount = this.lastSocial.incoming.length;
 
     // Count material composition for Row 1 (Các mảnh lục giác)
     const matCounts: Record<MaterialId, number> = { heavy: 0, base: 0, light: 0, sharp: 0 };
@@ -195,60 +262,126 @@ export class LobbyScreen {
           </div>
         </header>
 
-        <!-- 2 KHỐI BẰNG NHAU TUYỆT ĐỐI (1:1 WIDTH & 100% EQUAL HEIGHT) -->
-        <main class="lobby-stage equal-two-col">
-          <!-- BÊN TRÁI: KHO VŨ KHÍ (4 DÒNG: CÁC MẢNH + Ô 1 + Ô 2 + Ô 3) -->
-          <section class="lobby-card">
-            <div class="lobby-panel-head">
-              <span class="lobby-panel-title">Kho vũ khí</span>
-              <div class="lobby-panel-head-right">
-                <span class="lobby-panel-meta">${n} mảnh · 3 cấu hình</span>
-                <button id="lobbyCosmeticsBtn" class="btn xs ghost" type="button" title="Tùy chỉnh màu Neon &amp; hiệu ứng">Ngoại hình</button>
+        <!-- CẠNH TRÁI: BẠN BÈ + 2 KHỐI CHÍNH 1:1 -->
+        <div class="lobby-body">
+          <div id="friendsDrawerBackdrop" class="friends-drawer-backdrop ${this.mobileDrawerOpen ? 'open' : ''}"></div>
+          <button
+            id="friendsMobileTab"
+            class="friends-mobile-tab"
+            type="button"
+            title="Danh sách bạn bè"
+            aria-label="Mở danh sách bạn bè"
+          >
+            ${SVG_FRIENDS_ICON}
+            <span>Bạn bè</span>
+            <span id="friendsMobileBadge" class="friends-tab-badge ${reqCount > 0 ? 'has-req' : ''}">${reqCount > 0 ? `+${reqCount}` : onlineCount}</span>
+          </button>
+
+          <aside
+            id="friendsSidebar"
+            class="friends-sidebar ${this.sidebarCollapsed ? 'collapsed' : ''} ${this.mobileDrawerOpen ? 'drawer-open' : ''}"
+          >
+            <div class="friends-head">
+              <div class="friends-head-left">
+                <span class="friends-title">${SVG_FRIENDS_ICON} Bạn bè</span>
+                <span id="friendsCountPill" class="friends-count-pill">${onlineCount}/${this.lastSocial.friends.length}</span>
               </div>
+              <button
+                id="friendsToggleBtn"
+                class="friends-toggle-btn"
+                type="button"
+                title="${this.sidebarCollapsed ? 'Mở rộng bạn bè' : 'Thu gọn bạn bè'}"
+              >${this.sidebarCollapsed ? '»' : '«'}</button>
             </div>
 
-            <div class="lobby-weapon-list four-rows">
-              <!-- DÒNG 1: BỘ MẢNH LỤC GIÁC -->
-              <div class="lobby-hexes-row" id="lobbyHexesRow">
-                <div class="lobby-hexes-top">
-                  <span class="lobby-weapon-slot">Bộ mảnh chung</span>
-                  <span class="lobby-hexes-count">${n} / 10 mảnh</span>
-                </div>
-                <div class="lobby-hexes-chips">${matSummaryChips}</div>
-              </div>
+            <div class="friends-collapsed-strip" id="friendsCollapsedStrip" title="Mở danh sách bạn bè">
+              ${SVG_FRIENDS_ICON}
+              <span class="friends-vlabel">BẠN BÈ</span>
+              <span id="friendsCollapsedCount" class="friends-tab-badge ${reqCount > 0 ? 'has-req' : ''}">${reqCount > 0 ? `+${reqCount}` : onlineCount}</span>
+            </div>
 
-              <!-- DÒNG 2, 3, 4: 3 Ô CẤU HÌNH VŨ KHÍ -->
-              ${SLOT_KEYS.map((sk, idx) => {
-                const bp = loadout.blueprints[sk];
-                const st = STANCE_META[bp.stance];
-                return `
-                  <div class="lobby-weapon-row" data-lobby-slot="${sk}">
-                    <canvas class="lobby-weapon-mini" data-preview-slot="${sk}"></canvas>
-                    <div class="lobby-weapon-info">
-                      <div class="lobby-weapon-top">
-                        <span class="lobby-weapon-slot">Ô ${idx + 1}</span>
-                        <span class="lobby-weapon-stance" style="color:${st.color};border-color:${st.color}55;">${st.label}</span>
-                      </div>
-                      <span class="lobby-weapon-name">${this.escapeHtml(bp.name)}</span>
-                      <span class="lobby-weapon-sub">Cỡ mặc định ${Math.round(bp.defaultScale * 100)}%</span>
+            <div id="friendsBodyWrap" class="friends-body-wrap">
+              ${
+                user
+                  ? `
+                    <form id="friendAddForm" class="friends-add-row" autocomplete="off">
+                      <input
+                        id="friendAddInput"
+                        class="friends-add-input"
+                        maxlength="20"
+                        placeholder="Tên người chơi..."
+                        value="${this.escapeHtml(this.addFriendDraft)}"
+                      />
+                      <button id="friendAddBtn" class="friends-add-btn" type="submit" title="Gửi lời mời kết bạn">+</button>
+                    </form>
+                    <div id="friendsFeedbackSlot"></div>
+                    <div id="friendsListRegion" class="friends-list-region"></div>
+                  `
+                  : `
+                    <div class="friends-guest-box">
+                      <p>Đăng nhập tài khoản để kết bạn, mời đấu PvP và xem trực tiếp trận đấu của bạn bè.</p>
+                      <button id="friendsLoginBtn" class="btn sm primary" type="button">Đăng nhập ngay</button>
                     </div>
+                  `
+              }
+            </div>
+          </aside>
+
+          <!-- 2 KHỐI BẰNG NHAU TUYỆT ĐỐI (1:1 WIDTH & 100% EQUAL HEIGHT) -->
+          <main class="lobby-stage equal-two-col">
+            <!-- BÊN TRÁI: KHO VŨ KHÍ (4 DÒNG: CÁC MẢNH + Ô 1 + Ô 2 + Ô 3) -->
+            <section class="lobby-card">
+              <div class="lobby-panel-head">
+                <span class="lobby-panel-title">Kho vũ khí</span>
+                <div class="lobby-panel-head-right">
+                  <span class="lobby-panel-meta">${n} mảnh · 3 cấu hình</span>
+                  <button id="lobbyCosmeticsBtn" class="btn xs ghost" type="button" title="Tùy chỉnh màu Neon &amp; hiệu ứng">Ngoại hình</button>
+                </div>
+              </div>
+
+              <div class="lobby-weapon-list four-rows">
+                <!-- DÒNG 1: BỘ MẢNH LỤC GIÁC -->
+                <div class="lobby-hexes-row" id="lobbyHexesRow">
+                  <div class="lobby-hexes-top">
+                    <span class="lobby-weapon-slot">Bộ mảnh chung</span>
+                    <span class="lobby-hexes-count">${n} / 10 mảnh</span>
                   </div>
-                `;
-              }).join('')}
-            </div>
+                  <div class="lobby-hexes-chips">${matSummaryChips}</div>
+                </div>
 
-            <button id="lobbyWeaponsBtn" class="btn-lobby-cta armory">Cấu hình vũ khí</button>
-          </section>
+                <!-- DÒNG 2, 3, 4: 3 Ô CẤU HÌNH VŨ KHÍ -->
+                ${SLOT_KEYS.map((sk, idx) => {
+                  const bp = loadout.blueprints[sk];
+                  const st = STANCE_META[bp.stance];
+                  return `
+                    <div class="lobby-weapon-row" data-lobby-slot="${sk}">
+                      <canvas class="lobby-weapon-mini" data-preview-slot="${sk}"></canvas>
+                      <div class="lobby-weapon-info">
+                        <div class="lobby-weapon-top">
+                          <span class="lobby-weapon-slot">Ô ${idx + 1}</span>
+                          <span class="lobby-weapon-stance" style="color:${st.color};border-color:${st.color}55;">${st.label}</span>
+                        </div>
+                        <span class="lobby-weapon-name">${this.escapeHtml(bp.name)}</span>
+                        <span class="lobby-weapon-sub">Cỡ mặc định ${Math.round(bp.defaultScale * 100)}%</span>
+                      </div>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
 
-          <!-- BÊN PHẢI: VÀO TRẬN (CÙNG KÍCH THƯỚC VỚI KHO VŨ KHÍ) -->
-          <section class="lobby-card">
-            <div class="lobby-mode-tabs">
-              <button class="lobby-mode-tab ${pvp.tab === 'bot' ? 'active' : ''}" data-mode-tab="bot">Đấu với Bot</button>
-              <button class="lobby-mode-tab ${pvp.tab === 'pvp' ? 'active' : ''}" data-mode-tab="pvp">Đấu PvP 1v1</button>
-            </div>
-            ${rightBody}
-          </section>
-        </main>
+              <button id="lobbyWeaponsBtn" class="btn-lobby-cta armory">Cấu hình vũ khí</button>
+            </section>
+
+            <!-- BÊN PHẢI: VÀO TRẬN (CÙNG KÍCH THƯỚC VỚI KHO VŨ KHÍ) -->
+            <section class="lobby-card">
+              <div class="lobby-mode-tabs">
+                <button class="lobby-mode-tab ${pvp.tab === 'bot' ? 'active' : ''}" data-mode-tab="bot">Đấu với Bot</button>
+                <button class="lobby-mode-tab ${pvp.tab === 'pvp' ? 'active' : ''}" data-mode-tab="pvp">Đấu PvP 1v1</button>
+              </div>
+              ${rightBody}
+            </section>
+          </main>
+        </div>
       </div>
     `;
 
@@ -309,6 +442,278 @@ export class LobbyScreen {
         this.drawBlueprintPreview(cvs, loadout.blueprints[sk], loadout);
       }
     }
+
+    this.bindFriendsControls();
+    this.renderFriendsDynamic();
+  }
+
+  public updateSocial(social: LobbySocialState, user: AuthUser | null): void {
+    this.lastSocial = social;
+    const prevWasLoggedIn = !!this.lastUser;
+    this.lastUser = user;
+    if (!this.mount.querySelector('#friendsSidebar')) return;
+
+    if (prevWasLoggedIn !== !!user) {
+      const bodyWrap = this.mount.querySelector('#friendsBodyWrap');
+      if (bodyWrap) {
+        bodyWrap.innerHTML = user
+          ? `
+            <form id="friendAddForm" class="friends-add-row" autocomplete="off">
+              <input
+                id="friendAddInput"
+                class="friends-add-input"
+                maxlength="20"
+                placeholder="Tên người chơi..."
+                value="${this.escapeHtml(this.addFriendDraft)}"
+              />
+              <button id="friendAddBtn" class="friends-add-btn" type="submit" title="Gửi lời mời kết bạn">+</button>
+            </form>
+            <div id="friendsFeedbackSlot"></div>
+            <div id="friendsListRegion" class="friends-list-region"></div>
+          `
+          : `
+            <div class="friends-guest-box">
+              <p>Đăng nhập tài khoản để kết bạn, mời đấu PvP và xem trực tiếp trận đấu của bạn bè.</p>
+              <button id="friendsLoginBtn" class="btn sm primary" type="button">Đăng nhập ngay</button>
+            </div>
+          `;
+        this.bindFriendsAddAndGuest();
+      }
+    }
+
+    this.renderFriendsDynamic();
+  }
+
+  private bindFriendsControls(): void {
+    const sidebar = this.mount.querySelector<HTMLElement>('#friendsSidebar');
+    const backdrop = this.mount.querySelector<HTMLElement>('#friendsDrawerBackdrop');
+    const toggleBtn = this.mount.querySelector<HTMLButtonElement>('#friendsToggleBtn');
+
+    const syncDrawer = () => {
+      sidebar?.classList.toggle('drawer-open', this.mobileDrawerOpen);
+      backdrop?.classList.toggle('open', this.mobileDrawerOpen);
+    };
+
+    toggleBtn?.addEventListener('click', () => {
+      const isDrawerViewport = window.matchMedia('(max-width: 980px), (max-height: 460px)').matches;
+      if (isDrawerViewport) {
+        this.mobileDrawerOpen = false;
+        syncDrawer();
+      } else {
+        this.sidebarCollapsed = !this.sidebarCollapsed;
+        sidebar?.classList.toggle('collapsed', this.sidebarCollapsed);
+        if (toggleBtn) {
+          toggleBtn.textContent = this.sidebarCollapsed ? '»' : '«';
+          toggleBtn.title = this.sidebarCollapsed ? 'Mở rộng bạn bè' : 'Thu gọn bạn bè';
+        }
+      }
+    });
+
+    this.mount.querySelector('#friendsCollapsedStrip')?.addEventListener('click', () => {
+      this.sidebarCollapsed = false;
+      sidebar?.classList.remove('collapsed');
+      if (toggleBtn) {
+        toggleBtn.textContent = '«';
+        toggleBtn.title = 'Thu gọn bạn bè';
+      }
+    });
+
+    this.mount.querySelector('#friendsMobileTab')?.addEventListener('click', () => {
+      this.mobileDrawerOpen = !this.mobileDrawerOpen;
+      syncDrawer();
+    });
+
+    backdrop?.addEventListener('click', () => {
+      this.mobileDrawerOpen = false;
+      syncDrawer();
+    });
+
+    this.bindFriendsAddAndGuest();
+  }
+
+  private bindFriendsAddAndGuest(): void {
+    this.mount.querySelector('#friendsLoginBtn')?.addEventListener('click', () => this.onOpenAuth());
+
+    const form = this.mount.querySelector<HTMLFormElement>('#friendAddForm');
+    const input = this.mount.querySelector<HTMLInputElement>('#friendAddInput');
+    input?.addEventListener('input', () => {
+      this.addFriendDraft = input.value;
+    });
+    form?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const target = (input?.value ?? this.addFriendDraft).trim();
+      if (!target) return;
+      void this.onSendFriendRequest(target).then(() => {
+        if (!this.lastSocial.feedbackMsg?.isError) {
+          this.addFriendDraft = '';
+          if (input) input.value = '';
+        }
+      });
+    });
+  }
+
+  private renderFriendsDynamic(): void {
+    const s = this.lastSocial;
+    const onlineCount = s.friends.filter((f) => f.status !== 'offline').length;
+    const reqCount = s.incoming.length;
+
+    const countPill = this.mount.querySelector('#friendsCountPill');
+    if (countPill) countPill.textContent = `${onlineCount}/${s.friends.length}`;
+
+    const mobBadge = this.mount.querySelector('#friendsMobileBadge');
+    if (mobBadge) {
+      mobBadge.textContent = reqCount > 0 ? `+${reqCount}` : String(onlineCount);
+      mobBadge.classList.toggle('has-req', reqCount > 0);
+    }
+    const colBadge = this.mount.querySelector('#friendsCollapsedCount');
+    if (colBadge) {
+      colBadge.textContent = reqCount > 0 ? `+${reqCount}` : String(onlineCount);
+      colBadge.classList.toggle('has-req', reqCount > 0);
+    }
+
+    const fbSlot = this.mount.querySelector('#friendsFeedbackSlot');
+    if (fbSlot) {
+      fbSlot.innerHTML = s.feedbackMsg
+        ? `<div class="friends-feedback ${s.feedbackMsg.isError ? 'err' : 'ok'}">${this.escapeHtml(s.feedbackMsg.text)}</div>`
+        : '';
+    }
+
+    const region = this.mount.querySelector('#friendsListRegion');
+    if (!region || !this.lastUser) return;
+
+    const incomingHtml =
+      s.incoming.length > 0
+        ? `
+          <div class="friends-section">
+            <div class="friends-sec-title">Lời mời kết bạn (${s.incoming.length})</div>
+            ${s.incoming
+              .map(
+                (req) => `
+                  <div class="friend-req-row">
+                    <span class="friend-req-name">${this.escapeHtml(req.username)}</span>
+                    <div class="friend-req-btns">
+                      <button class="friend-mini-btn accept" data-req-accept="${req.requestId}" type="button">Nhận</button>
+                      <button class="friend-mini-btn decline" data-req-decline="${req.requestId}" type="button">Từ chối</button>
+                    </div>
+                  </div>
+                `,
+              )
+              .join('')}
+          </div>
+        `
+        : '';
+
+    const friendsHtml =
+      s.friends.length > 0
+        ? s.friends
+            .map((f) => {
+              const statusText =
+                f.spectatorCount > 0 && f.canSpectate
+                  ? `${STATUS_LABELS[f.status]} · ${f.spectatorCount} xem`
+                  : STATUS_LABELS[f.status];
+              const isConfirming = this.confirmRemoveId === f.userId;
+              return `
+                <div class="friend-row ${f.status === 'offline' ? 'is-offline' : ''}">
+                  <div class="friend-info">
+                    <div class="friend-name-line">
+                      <span class="friend-dot dot-${f.status}"></span>
+                      <span class="friend-name">${this.escapeHtml(f.username)}</span>
+                    </div>
+                    <span class="friend-status">${statusText}</span>
+                  </div>
+                  <div class="friend-actions">
+                    ${
+                      f.canSpectate
+                        ? `<button class="friend-mini-btn watch" data-friend-watch="${f.userId}" type="button" title="Xem trực tiếp">Xem</button>`
+                        : ''
+                    }
+                    ${
+                      f.status === 'lobby'
+                        ? `<button class="friend-mini-btn invite" data-friend-invite="${f.userId}" type="button" title="Mời đấu PvP 1v1">Mời</button>`
+                        : ''
+                    }
+                    <button
+                      class="friend-mini-btn remove ${isConfirming ? 'confirm' : ''}"
+                      data-friend-remove="${f.userId}"
+                      type="button"
+                      title="${isConfirming ? 'Bấm lần nữa để xóa' : 'Xóa bạn'}"
+                    >${isConfirming ? 'Xóa?' : '✕'}</button>
+                  </div>
+                </div>
+              `;
+            })
+            .join('')
+        : `<div class="friends-empty">${s.loading ? 'Đang tải danh sách...' : 'Chưa có bạn bè nào. Nhập tên ở trên để kết bạn.'}</div>`;
+
+    const outgoingHtml =
+      s.outgoing.length > 0
+        ? `
+          <div class="friends-section">
+            <div class="friends-sec-title">Đã gửi (${s.outgoing.length})</div>
+            ${s.outgoing
+              .map(
+                (req) => `
+                  <div class="friend-req-row outgoing">
+                    <span class="friend-req-name">${this.escapeHtml(req.username)}</span>
+                    <button class="friend-mini-btn decline" data-friend-cancel-out="${req.userId}" type="button">Hủy</button>
+                  </div>
+                `,
+              )
+              .join('')}
+          </div>
+        `
+        : '';
+
+    region.innerHTML = `
+      ${incomingHtml}
+      <div class="friends-section">
+        <div class="friends-sec-title">Danh sách (${s.friends.length})</div>
+        ${friendsHtml}
+      </div>
+      ${outgoingHtml}
+    `;
+
+    region.querySelectorAll<HTMLElement>('[data-req-accept]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = Number(btn.dataset.reqAccept);
+        void this.onRespondFriendRequest(id, true);
+      });
+    });
+    region.querySelectorAll<HTMLElement>('[data-req-decline]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = Number(btn.dataset.reqDecline);
+        void this.onRespondFriendRequest(id, false);
+      });
+    });
+    region.querySelectorAll<HTMLElement>('[data-friend-watch]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        this.mobileDrawerOpen = false;
+        this.onSpectateFriend(Number(btn.dataset.friendWatch));
+      });
+    });
+    region.querySelectorAll<HTMLElement>('[data-friend-invite]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        this.mobileDrawerOpen = false;
+        this.onInviteFriend(Number(btn.dataset.friendInvite));
+      });
+    });
+    region.querySelectorAll<HTMLElement>('[data-friend-remove]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const uid = Number(btn.dataset.friendRemove);
+        if (this.confirmRemoveId === uid) {
+          this.confirmRemoveId = null;
+          void this.onRemoveFriend(uid);
+        } else {
+          this.confirmRemoveId = uid;
+          this.renderFriendsDynamic();
+        }
+      });
+    });
+    region.querySelectorAll<HTMLElement>('[data-friend-cancel-out]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        void this.onRemoveFriend(Number(btn.dataset.friendCancelOut));
+      });
+    });
   }
 
   public hide(): void {

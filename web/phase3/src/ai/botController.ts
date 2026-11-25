@@ -19,7 +19,12 @@ import {
   triggerFighterSpecial,
   triggerSmartRecall,
 } from '@attacks/index';
-import { getActiveStance, getLooseGravityFieldRadius } from '@core/world/structure';
+import {
+  getActiveStance,
+  getLooseGravityFieldRadius,
+  isDefenseFortressActive,
+  isLooseGravityFieldActive,
+} from '@core/world/structure';
 import type { CombatStance, Fighter, FormKey, MatchState, Obstacle, ScaleTier, SlotKey } from '@core/types';
 
 type BotTactic = 'poke' | 'flank' | 'rush' | 'kite' | 'counter' | 'trap';
@@ -79,7 +84,7 @@ function distPointToSegment(px: number, py: number, ax: number, ay: number, bx: 
 
 function isPointShieldedByPlayer(player: Fighter, fromX: number, fromY: number): boolean {
   const pStance = getActiveStance(player);
-  if (pStance !== 'defense' && player.specialActive?.type !== 'defense') return false;
+  if (pStance !== 'defense' && !isDefenseFortressActive(player)) return false;
   const angFromPlayer = Math.atan2(fromY - player.y, fromX - player.x);
   return Math.abs(angleDiff(player.facing, angFromPlayer)) < 0.92;
 }
@@ -280,7 +285,7 @@ function chooseCounterPlan(state: MatchState, brain: BotBrain, dToPlayer: number
     enemy.fireMode = brain.tactic === 'trap' ? 'xayah' : dToPlayer < 250 ? 'volley' : 'xayah';
   }
 
-  if (enemy.specialActive?.type !== 'defense' && Math.abs(enemy.targetScale - targetScale) > 0.05) {
+  if (!isDefenseFortressActive(enemy) && Math.abs(enemy.targetScale - targetScale) > 0.05) {
     setFighterScale(state, enemy, targetScale);
   }
 }
@@ -378,14 +383,14 @@ export function updateBotAI(state: MatchState, dt: number): void {
     if (threat) {
       desiredFacing = Math.atan2(threat.ty - enemy.y, threat.tx - enemy.x);
     }
-    if (enemyStance === 'defense' && enemy.specialActive?.type !== 'defense') {
+    if (enemyStance === 'defense' && !isDefenseFortressActive(enemy)) {
       if (threat || (playerStance === 'melee' && dToPlayer < 220)) {
         // Tilt ~38° off incoming line so hits deflect cleanly off the shield edge!
         desiredFacing += brain.shieldTiltSign * 0.66;
       }
     }
     const diff = angleDiff(enemy.facing, desiredFacing);
-    if (enemy.specialActive?.type === 'defense') {
+    if (isDefenseFortressActive(enemy)) {
       enemy.facing += clamp(diff, -3.4 * dt, 3.4 * dt);
     } else {
       enemy.facing += diff * Math.min(1, dt * 11);
@@ -393,14 +398,14 @@ export function updateBotAI(state: MatchState, dt: number): void {
   }
 
   // 3. Tactical Evasive / Flanking Dash (real vector-aware dash!)
-  if (enemy.dashCooldown <= 0 && enemy.dashTimer <= 0 && enemy.specialActive?.type !== 'defense') {
+  if (enemy.dashCooldown <= 0 && enemy.dashTimer <= 0 && !isDefenseFortressActive(enemy)) {
     const dashDist = DASH_SPEED * DASH_DURATION;
     if (threat && threat.dist < 185) {
       const evadeAng = chooseBestPerpAngle(enemy.x, enemy.y, threat.threatAngle, dashDist, obstacles);
       executeFighterDash(state, enemy, evadeAng);
       enemy.dashCooldown = DASH_COOLDOWN + 1.1;
     } else if (
-      (player.specialActive?.type === 'defense' || player.specialActive?.type === 'melee' || playerStance === 'melee') &&
+      (isDefenseFortressActive(player) || player.specialActive?.type === 'melee' || playerStance === 'melee') &&
       brain.tactic === 'kite' &&
       dToPlayer < 195
     ) {
@@ -416,11 +421,11 @@ export function updateBotAI(state: MatchState, dt: number): void {
 
   // 4. Smart Movement, Flanking & Cover Navigation
   const minSafeDist =
-    player.specialActive?.type === 'defense'
+    isDefenseFortressActive(player)
       ? 295
       : player.specialActive?.type === 'melee'
         ? 360
-        : player.specialActive?.type === 'loose'
+        : isLooseGravityFieldActive(player)
           ? Math.max(255, getLooseGravityFieldRadius(player) + PLAYER_RADIUS + 75)
           : enemyStance === 'ranged'
             ? 355
@@ -494,7 +499,7 @@ export function updateBotAI(state: MatchState, dt: number): void {
 
   // 5. Contextual Non-Copycat Special Skill Activation & Guided Steering
   const losClear = !segmentIntersectsAnyObstacle(obstacles, enemy.x, enemy.y, player.x, player.y, BASE_HEX_RADIUS * 0.6);
-  const playerHasPhaiDai = player.specialActive?.type === 'defense';
+  const playerHasPhaiDai = isDefenseFortressActive(player);
 
   if (enemy.specialCooldown <= 0 && !enemy.specialActive) {
     const shouldPopMelee =
@@ -571,7 +576,7 @@ export function updateBotAI(state: MatchState, dt: number): void {
       const stored = enemy.specialActive?.storedEnergy ?? 0;
       const timer = enemy.specialActive?.timer ?? 99;
       if (
-        enemy.specialActive?.type === 'defense' &&
+        isDefenseFortressActive(enemy) &&
         dToPlayer < 235 &&
         (stored >= 75 || timer < 0.45)
       ) {

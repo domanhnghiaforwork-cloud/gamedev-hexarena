@@ -1,11 +1,20 @@
 import { canvasFont } from '@config/typography';
 import { DASH_COOLDOWN } from '@core/constants';
 import { clamp } from '@core/math/hexMath';
-import { getFighterSpecialKey, SPECIAL_SKILLS, STANCE_META } from '@attacks/index';
-import { getActiveBlueprint, isSlotKey } from '@core/world/structure';
+import {
+  getFighterSelectedSpecialInfo,
+  getSpecialSkillsForMode,
+  STANCE_META,
+} from '@attacks/index';
+import { getActiveBlueprint, isDefenseFortressActive, isDefenseHexWallActive, isSlotKey } from '@core/world/structure';
 import type { Fighter, FormKey } from '@core/types';
 import type { LiveInputState } from '@input/inputManager';
-import { getRotateHandlePos } from '@input/hudPresets';
+import {
+  getMobileSpecialRadialPos,
+  getPCSpecialOptionRects,
+  getPCSpecialRadialPos,
+  getRotateHandlePos,
+} from '@input/hudPresets';
 import {
   formatKeyLabel,
   MOBILE_WIDGET_LABELS,
@@ -171,35 +180,48 @@ export function renderMobileCanvasHUD(
   // 3. Main Attack / Shield-Aim Pad
   const bp = getActiveBlueprint(player);
   const isDefenseStance = bp?.stance === 'defense';
-  const isFortressActive = isDefenseStance && player.specialActive?.type === 'defense';
-  const atkLabel = isFortressActive ? 'XUNG' : bp ? STANCE_META[bp.stance].attackLabel : 'PHÓNG';
+  const isFortressActive = isDefenseStance && isDefenseFortressActive(player);
+  const isHexWallActive = isDefenseStance && isDefenseHexWallActive(player);
+  const atkLabel = isFortressActive
+    ? 'XUNG'
+    : isHexWallActive
+      ? 'TƯỜNG'
+      : bp
+        ? STANCE_META[bp.stance].attackLabel
+        : 'PHÓNG';
   ctx.save();
   ctx.globalAlpha = m.atk.opacity;
   ctx.beginPath();
   ctx.arc(m.atk.cx, m.atk.cy, m.atk.r, 0, Math.PI * 2);
   ctx.fillStyle = isFortressActive
     ? 'rgba(16, 185, 129, 0.42)'
-    : isDefenseStance
-      ? 'rgba(15, 23, 42, 0.66)'
-      : 'rgba(14, 116, 144, 0.42)';
+    : isHexWallActive
+      ? 'rgba(45, 212, 191, 0.36)'
+      : isDefenseStance
+        ? 'rgba(15, 23, 42, 0.66)'
+        : 'rgba(14, 116, 144, 0.42)';
   ctx.fill();
   ctx.strokeStyle = isFortressActive
     ? '#34d399'
-    : isDefenseStance
-      ? 'rgba(52, 211, 153, 0.55)'
-      : '#38bdf8';
-  ctx.lineWidth = isFortressActive ? 3.0 : 2.4;
+    : isHexWallActive
+      ? '#2dd4bf'
+      : isDefenseStance
+        ? 'rgba(52, 211, 153, 0.55)'
+        : '#38bdf8';
+  ctx.lineWidth = isFortressActive || isHexWallActive ? 3.0 : 2.4;
   ctx.stroke();
 
   ctx.beginPath();
   ctx.arc(live.atk.knobX, live.atk.knobY, m.atk.r * 0.58, 0, Math.PI * 2);
   ctx.fillStyle = isFortressActive
     ? 'rgba(52, 211, 153, 0.90)'
-    : isDefenseStance
-      ? 'rgba(16, 185, 129, 0.45)'
-      : 'rgba(56, 189, 248, 0.85)';
+    : isHexWallActive
+      ? 'rgba(45, 212, 191, 0.88)'
+      : isDefenseStance
+        ? 'rgba(16, 185, 129, 0.45)'
+        : 'rgba(56, 189, 248, 0.85)';
   ctx.fill();
-  ctx.fillStyle = isDefenseStance && !isFortressActive ? '#d1fae5' : '#082f49';
+  ctx.fillStyle = isDefenseStance && !isFortressActive && !isHexWallActive ? '#d1fae5' : '#082f49';
   ctx.font = canvasFont(900, Math.max(10, Math.round(12 * m.baseScale)));
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -279,9 +301,9 @@ export function renderMobileCanvasHUD(
     });
   }
 
-  // 6. Special Skill Button (Ulti)
-  const spKey = getFighterSpecialKey(player);
-  const spMeta = SPECIAL_SKILLS[spKey];
+  // 6. Special Skill Button (Ulti) + Corner Slot Badge + Hold Radial
+  const spInfo = getFighterSelectedSpecialInfo(player);
+  const spMeta = spInfo.skill;
   ctx.save();
   ctx.globalAlpha = m.special.opacity;
   ctx.beginPath();
@@ -305,7 +327,104 @@ export function renderMobileCanvasHUD(
       ? `${Math.ceil(player.specialCooldown)}s`
       : 'Ulti';
   ctx.fillText(spText, m.special.cx, m.special.cy);
+
+  // Corner Number Badge (1 / 2 / ...) indicating active Ulti slot
+  const badgeR = Math.max(8, 9.5 * m.baseScale);
+  const badgeX = m.special.cx + m.special.r * 0.68;
+  const badgeY = m.special.cy - m.special.r * 0.68;
+  ctx.beginPath();
+  ctx.arc(badgeX, badgeY, badgeR, 0, Math.PI * 2);
+  ctx.fillStyle = '#0f172a';
+  ctx.fill();
+  ctx.strokeStyle = spMeta.color;
+  ctx.lineWidth = 1.8;
+  ctx.stroke();
+  ctx.fillStyle = '#f8fafc';
+  ctx.font = canvasFont(900, Math.max(8.5, Math.round(10 * m.baseScale)));
+  ctx.fillText(`${spInfo.index + 1}`, badgeX, badgeY + 0.5);
   ctx.restore();
+
+  const showMobileSpecialRadial =
+    (live.specialRadial.active && live.specialRadial.source === 'touch') ||
+    (editMode && opts?.selectedWidget === 'special');
+  if (showMobileSpecialRadial) {
+    const isPreviewOnly = !live.specialRadial.active;
+    const modeSkills = isPreviewOnly
+      ? spInfo.skills
+      : getSpecialSkillsForMode(live.specialRadial.modeId);
+    const bubbleCount = isPreviewOnly ? Math.max(2, modeSkills.length) : modeSkills.length;
+    const s = m.baseScale;
+
+    for (let idx = 0; idx < bubbleCount; idx++) {
+      const skillOpt = modeSkills[idx];
+      const pos = getMobileSpecialRadialPos(m.special, s, m.specialRotRad, idx, bubbleCount);
+      const hovered = !isPreviewOnly && live.specialRadial.hoverIdx === idx;
+      const isArmed = skillOpt ? skillOpt.id === spMeta.id : idx === 0;
+      const optColor = skillOpt?.color ?? spMeta.color;
+      const shortLabel = skillOpt ? skillOpt.short : `Chiêu ${idx + 1}`;
+
+      ctx.save();
+      ctx.globalAlpha = isPreviewOnly ? 0.62 : 1;
+
+      if (hovered) {
+        ctx.beginPath();
+        ctx.moveTo(m.special.cx, m.special.cy);
+        ctx.lineTo(pos.x, pos.y);
+        ctx.strokeStyle = optColor;
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+      }
+
+      const drawR = hovered ? pos.r * 1.16 : pos.r;
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, drawR, 0, Math.PI * 2);
+      ctx.fillStyle = hovered ? optColor : 'rgba(15, 23, 42, 0.92)';
+      ctx.fill();
+      ctx.strokeStyle = hovered ? '#ffffff' : optColor;
+      ctx.lineWidth = hovered ? 2.6 : isArmed ? 2.2 : 1.5;
+      ctx.stroke();
+
+      ctx.fillStyle = hovered ? '#082f49' : '#f8fafc';
+      ctx.font = canvasFont(900, Math.max(11, Math.round(13 * s)));
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`${idx + 1}`, pos.x, pos.y - 2 * s);
+
+      ctx.fillStyle = hovered ? '#0f172a' : '#cbd5e1';
+      ctx.font = canvasFont(700, Math.max(7.5, Math.round(8 * s)));
+      ctx.fillText(shortLabel.slice(0, 7), pos.x, pos.y + 10 * s);
+      ctx.restore();
+    }
+
+    if (!isPreviewOnly) {
+      const hoveredSkill =
+        live.specialRadial.hoverIdx !== -1 ? modeSkills[live.specialRadial.hoverIdx] : null;
+      const canInstantCast = player.specialCooldown <= 0 && !player.specialActive;
+      const hintText = hoveredSkill
+        ? canInstantCast
+          ? `Thả: DÙNG NGAY · ${hoveredSkill.name}`
+          : `Thả: ĐỔI MẶC ĐỊNH · ${hoveredSkill.name}`
+        : 'Kéo chọn chiêu · Thả ở nút Ulti để hủy';
+      const hintColor = hoveredSkill ? hoveredSkill.color : '#94a3b8';
+
+      ctx.save();
+      ctx.font = canvasFont(800, Math.max(9.5, Math.round(10.5 * s)));
+      const tw = ctx.measureText(hintText).width + 20;
+      const hx = clamp(m.special.cx - tw * 0.5, 8, live.vw - tw - 8);
+      const hy = Math.max(m.safeTop + 6, m.special.cy - m.special.r - 92 * s);
+      roundRectPath(ctx, hx, hy, tw, 24 * s, 99);
+      ctx.fillStyle = 'rgba(11, 16, 26, 0.92)';
+      ctx.fill();
+      ctx.strokeStyle = hintColor;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.fillStyle = '#f8fafc';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(hintText, hx + tw * 0.5, hy + 12 * s);
+      ctx.restore();
+    }
+  }
 
   // 7. Recall & Select All + Fire Tabs (Loose or Edit mode)
   if (isLoose) {
@@ -411,7 +530,8 @@ export function renderMobileCanvasHUD(
   }
 
   // 10. AoV Cancel X Zone (shown while aiming an actual attack/dash or in Edit mode)
-  const isPureDefense = isDefenseStance && !isFortressActive;
+  const isPureDefense =
+    isDefenseStance && !isFortressActive && !isHexWallActive;
   if ((player.isAiming && !isPureDefense) || player.isAimingDash || editMode) {
     renderCancelZone(ctx, m.cancel.cx, m.cancel.cy, m.cancel.r, live.cancelHovered, m.cancel.opacity);
   }
@@ -634,9 +754,9 @@ export function renderDesktopCanvasHUD(
     pc.dashBtn.y + pc.dashBtn.h * 0.5,
   );
 
-  // Special Skill Button
-  const spKey = getFighterSpecialKey(player);
-  const spMeta = SPECIAL_SKILLS[spKey];
+  // Special Skill Button + Corner Number Badge + Numbered Quick-Switch Pills above Dock
+  const spInfo = getFighterSelectedSpecialInfo(player);
+  const spMeta = spInfo.skill;
   roundRectPath(ctx, pc.specialBtn.x, pc.specialBtn.y, pc.specialBtn.w, pc.specialBtn.h, 8);
   ctx.fillStyle = player.specialActive
     ? 'rgba(192, 132, 252, 0.36)'
@@ -648,6 +768,9 @@ export function renderDesktopCanvasHUD(
   ctx.lineWidth = player.specialActive ? 2.4 : 1.7;
   ctx.stroke();
   ctx.fillStyle = '#f8fafc';
+  ctx.font = canvasFont(800, Math.max(9, Math.round(10.5 * s)));
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
   const spLabel = player.specialActive
     ? `Ulti ${player.specialActive.timer.toFixed(1)}s`
     : player.specialCooldown > 0
@@ -655,7 +778,141 @@ export function renderDesktopCanvasHUD(
       : `Ulti [${formatKeyLabel(kb.special)}]`;
   ctx.fillText(spLabel, pc.specialBtn.x + pc.specialBtn.w * 0.5, pc.specialBtn.y + pc.specialBtn.h * 0.5);
 
+  // Corner Number Badge (1 / 2 / ...) on Special Button
+  const badgeR = Math.max(8, 9 * s);
+  const badgeX = pc.specialBtn.x + pc.specialBtn.w - 3 * s;
+  const badgeY = pc.specialBtn.y + 3 * s;
+  ctx.beginPath();
+  ctx.arc(badgeX, badgeY, badgeR, 0, Math.PI * 2);
+  ctx.fillStyle = '#0f172a';
+  ctx.fill();
+  ctx.strokeStyle = spMeta.color;
+  ctx.lineWidth = 1.6;
+  ctx.stroke();
+  ctx.fillStyle = '#f8fafc';
+  ctx.font = canvasFont(900, Math.max(8.5, Math.round(9.5 * s)));
+  ctx.fillText(`${spInfo.index + 1}`, badgeX, badgeY + 0.5);
+
+  // Numbered Quick-Switch Pills directly above Special Button + [V] hint
+  const spPills = getPCSpecialOptionRects(pc.specialBtn, s, spInfo.skills.length);
+  if (spPills.length > 0) {
+    const firstPill = spPills[0];
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = canvasFont(700, Math.max(8, Math.round(9 * s)));
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`[${formatKeyLabel(kb.cycleSpecial)}]`, firstPill.x - 5, firstPill.y + firstPill.h * 0.5);
+
+    for (const pill of spPills) {
+      const opt = spInfo.skills[pill.index];
+      const active = opt?.id === spMeta.id;
+      const col = opt?.color ?? spMeta.color;
+      roundRectPath(ctx, pill.x, pill.y, pill.w, pill.h, 6);
+      ctx.fillStyle = active ? 'rgba(15, 23, 42, 0.94)' : 'rgba(15, 22, 34, 0.78)';
+      ctx.fill();
+      ctx.strokeStyle = active ? col : 'rgba(148, 163, 184, 0.34)';
+      ctx.lineWidth = active ? 2 : 1.1;
+      ctx.stroke();
+      if (active) {
+        roundRectPath(ctx, pill.x + 1, pill.y + 1, pill.w - 2, pill.h - 2, 5);
+        ctx.fillStyle = `${col}33`;
+        ctx.fill();
+      }
+      ctx.fillStyle = active ? '#ffffff' : '#94a3b8';
+      ctx.font = canvasFont(900, Math.max(8.5, Math.round(10 * s)));
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`${pill.index + 1}`, pill.x + pill.w * 0.5, pill.y + pill.h * 0.5);
+    }
+  }
+
   ctx.restore();
+
+  // PC Hold-V Radial Wheel Overlay (centered near cursor)
+  if (live.specialRadial.active && live.specialRadial.source === 'pc') {
+    const sr = live.specialRadial;
+    const skills = getSpecialSkillsForMode(sr.modeId);
+    const activeSkill = getFighterSelectedSpecialInfo(player).skill;
+    const hoveredSkill = sr.hoverIdx !== -1 ? skills[sr.hoverIdx] : null;
+    const canInstantCast = player.specialCooldown <= 0 && !player.specialActive;
+
+    ctx.save();
+    // Soft radial backdrop ring
+    ctx.beginPath();
+    ctx.arc(sr.originX, sr.originY, 108, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(10, 15, 26, 0.64)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.25)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Center hub (Cancel if pointer stays at center)
+    ctx.beginPath();
+    ctx.arc(sr.originX, sr.originY, 24, 0, Math.PI * 2);
+    ctx.fillStyle = sr.hoverIdx === -1 ? 'rgba(225, 29, 72, 0.34)' : 'rgba(15, 23, 42, 0.90)';
+    ctx.fill();
+    ctx.strokeStyle = sr.hoverIdx === -1 ? '#fb7185' : 'rgba(148, 163, 184, 0.45)';
+    ctx.lineWidth = 1.8;
+    ctx.stroke();
+    ctx.fillStyle = '#f8fafc';
+    ctx.font = canvasFont(800, 9.5);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(sr.hoverIdx === -1 ? 'HỦY' : canInstantCast ? 'DÙNG' : 'ĐỔI', sr.originX, sr.originY);
+
+    // Skill bubbles
+    for (let idx = 0; idx < skills.length; idx++) {
+      const opt = skills[idx];
+      const pos = getPCSpecialRadialPos(sr.originX, sr.originY, idx, skills.length);
+      const hovered = sr.hoverIdx === idx;
+      const isArmed = opt.id === activeSkill.id;
+
+      if (hovered) {
+        ctx.beginPath();
+        ctx.moveTo(sr.originX, sr.originY);
+        ctx.lineTo(pos.x, pos.y);
+        ctx.strokeStyle = opt.color;
+        ctx.lineWidth = 2.6;
+        ctx.stroke();
+      }
+
+      const drawR = hovered ? pos.r * 1.16 : pos.r;
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, drawR, 0, Math.PI * 2);
+      ctx.fillStyle = hovered ? opt.color : 'rgba(15, 23, 42, 0.94)';
+      ctx.fill();
+      ctx.strokeStyle = hovered ? '#ffffff' : opt.color;
+      ctx.lineWidth = hovered ? 2.6 : isArmed ? 2.2 : 1.5;
+      ctx.stroke();
+
+      ctx.fillStyle = hovered ? '#082f49' : '#f8fafc';
+      ctx.font = canvasFont(900, 14);
+      ctx.fillText(`${idx + 1}`, pos.x, pos.y - 3);
+      ctx.fillStyle = hovered ? '#0f172a' : '#cbd5e1';
+      ctx.font = canvasFont(700, 8.5);
+      ctx.fillText(opt.short.slice(0, 7), pos.x, pos.y + 11);
+    }
+
+    // Bottom status caption under wheel
+    const caption = hoveredSkill
+      ? canInstantCast
+        ? `Thả ${formatKeyLabel(kb.cycleSpecial)}: DÙNG NGAY · ${hoveredSkill.name}`
+        : `Thả ${formatKeyLabel(kb.cycleSpecial)}: ĐỔI MẶC ĐỊNH · ${hoveredSkill.name}`
+      : `Di chuột chọn · Thả ở giữa để hủy`;
+    ctx.font = canvasFont(800, 10.5);
+    const cw = ctx.measureText(caption).width + 20;
+    const cx = clamp(sr.originX - cw * 0.5, 10, live.vw - cw - 10);
+    const cy = Math.min(live.vh - 34, sr.originY + 114);
+    roundRectPath(ctx, cx, cy, cw, 24, 99);
+    ctx.fillStyle = 'rgba(11, 16, 26, 0.94)';
+    ctx.fill();
+    ctx.strokeStyle = hoveredSkill ? hoveredSkill.color : '#64748b';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillText(caption, cx + cw * 0.5, cy + 12);
+    ctx.restore();
+  }
 
   // Cancel X Zone when aiming on PC
   if (player.isAiming) {

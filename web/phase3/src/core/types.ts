@@ -289,6 +289,7 @@ export interface Fighter {
   specialCooldown: number;
   specialMaxCooldown: number;
   specialActive: SpecialActiveState | null;
+  selectedSpecialByMode: Partial<Record<AttackModeId, SpecialSkillId>>;
 
   attackAnim: AttackAnim | null;
   needsFullMorph: boolean;
@@ -360,10 +361,31 @@ export type SimEvent =
   | { type: 'toast'; message: string; target?: FighterId }
   | { type: 'matchEnd'; playerWon: boolean | null };
 
+export interface SummonedWallHex {
+  id: number;
+  x: number;
+  y: number;
+  hp: number;
+  maxHp: number;
+  flashTimer: number;
+  broken: boolean;
+}
+
+export interface SummonedWall {
+  id: number;
+  ownerId: FighterId;
+  angle: number;
+  timer: number;
+  maxTimer: number;
+  hexes: SummonedWallHex[];
+}
+
 export interface MatchState {
   player: Fighter;
   enemy: Fighter;
   obstacles: Obstacle[];
+  walls: SummonedWall[];
+  nextWallId: number;
   timeRemaining: number;
   hitStopTimer: number;
   matchOver: boolean;

@@ -1,38 +1,50 @@
 import { MAX_HEX_COUNT, MIN_HEX_COUNT } from '@core/constants';
-import type { RoomStatePayload } from '@net/protocol';
+import type { FriendPresenceItem, RoomStatePayload } from '@net/protocol';
 
 const HEX_COUNTS = Array.from({ length: MAX_HEX_COUNT - MIN_HEX_COUNT + 1 }, (_, i) => MIN_HEX_COUNT + i);
 
 export class PvPRoomModal {
   private mount: HTMLElement;
   private room: RoomStatePayload;
+  private invitableFriends: FriendPresenceItem[];
   private onSetHexCount: (count: number) => void;
   private onToggleReady: (ready: boolean) => void;
   private onStartPrep: () => void;
   private onLeaveRoom: () => void;
+  private onInviteFriend?: (friendUserId: number) => void;
   private onNotify: (msg: string) => void;
 
   constructor(opts: {
     mount: HTMLElement;
     room: RoomStatePayload;
+    invitableFriends?: FriendPresenceItem[];
     onSetHexCount: (count: number) => void;
     onToggleReady: (ready: boolean) => void;
     onStartPrep: () => void;
     onLeaveRoom: () => void;
+    onInviteFriend?: (friendUserId: number) => void;
     onNotify: (msg: string) => void;
   }) {
     this.mount = opts.mount;
     this.room = opts.room;
+    this.invitableFriends = opts.invitableFriends ?? [];
     this.onSetHexCount = opts.onSetHexCount;
     this.onToggleReady = opts.onToggleReady;
     this.onStartPrep = opts.onStartPrep;
     this.onLeaveRoom = opts.onLeaveRoom;
+    this.onInviteFriend = opts.onInviteFriend;
     this.onNotify = opts.onNotify;
     this.render();
   }
 
-  public update(room: RoomStatePayload): void {
+  public update(room: RoomStatePayload, invitableFriends?: FriendPresenceItem[]): void {
     this.room = room;
+    if (invitableFriends) this.invitableFriends = invitableFriends;
+    this.render();
+  }
+
+  public updateInvitableFriends(invitableFriends: FriendPresenceItem[]): void {
+    this.invitableFriends = invitableFriends;
     this.render();
   }
 
@@ -122,6 +134,24 @@ export class PvPRoomModal {
                       <div class="pvp-wait-dot"></div>
                       <div class="pvp-seat-name" style="color:#94a3b8;">Chưa có đối thủ</div>
                       <div class="pvp-seat-sub">Gửi mã <strong>${this.escapeHtml(r.code)}</strong> hoặc sao chép link mời cho bạn bè.</div>
+                      ${
+                        isHost && this.invitableFriends.length > 0
+                          ? `
+                            <div class="pvp-quick-invite-wrap">
+                              <span class="pvp-quick-invite-label">Mời bạn đang ở sảnh:</span>
+                              <div class="pvp-quick-invite-list">
+                                ${this.invitableFriends
+                                  .slice(0, 6)
+                                  .map(
+                                    (f) =>
+                                      `<button class="pvp-quick-invite-chip" data-room-invite="${f.userId}" type="button">+ ${this.escapeHtml(f.username)}</button>`,
+                                  )
+                                  .join('')}
+                              </div>
+                            </div>
+                          `
+                          : ''
+                      }
                     </div>
                   </div>
                 `
@@ -184,6 +214,11 @@ export class PvPRoomModal {
       });
       this.mount.querySelector('#pvpStartPrepBtn')?.addEventListener('click', () => {
         if (canStartPrep) this.onStartPrep();
+      });
+      this.mount.querySelectorAll<HTMLElement>('[data-room-invite]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          this.onInviteFriend?.(Number(btn.dataset.roomInvite));
+        });
       });
     } else {
       this.mount.querySelector('#pvpGuestReadyBtn')?.addEventListener('click', () => {

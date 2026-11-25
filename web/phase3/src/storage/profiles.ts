@@ -44,6 +44,7 @@ export type PCActionKey =
   | 'selectAll'
   | 'dash'
   | 'special'
+  | 'cycleSpecial'
   | 'cycleForm'
   | 'formLoose'
   | 'formSlot1'
@@ -94,6 +95,7 @@ export const DEFAULT_PC_KEYBINDS: PCKeybindMap = {
   selectAll: ' ',
   dash: 'shift',
   special: 'c',
+  cycleSpecial: 'v',
   cycleForm: 'r',
   formLoose: '1',
   formSlot1: '2',
@@ -112,6 +114,7 @@ export const PC_ACTION_LABELS: Record<PCActionKey, string> = {
   selectAll: 'Chọn / Bỏ chọn hết mảnh',
   dash: 'Kỹ năng Lướt (Dash)',
   special: 'Kỹ năng Ulti',
+  cycleSpecial: 'Đổi kỹ năng Ulti (Bấm: Xoay · Giữ: Vòng chọn)',
   cycleForm: 'Xoay vòng Dạng vũ khí',
   formLoose: 'Chọn nhanh: Đơn lẻ',
   formSlot1: 'Chọn nhanh: Cấu hình 1',
@@ -119,7 +122,8 @@ export const PC_ACTION_LABELS: Record<PCActionKey, string> = {
   formSlot3: 'Chọn nhanh: Cấu hình 3',
 };
 
-export function formatKeyLabel(key: string): string {
+export function formatKeyLabel(key?: string | null): string {
+  if (!key || typeof key !== 'string') return '?';
   if (key === ' ') return 'SPACE';
   if (key === 'shift') return 'SHIFT';
   if (key === 'tab') return 'TAB';

@@ -159,6 +159,7 @@ export function createFighter(
     specialCooldown: 0,
     specialMaxCooldown: 20,
     specialActive: null,
+    selectedSpecialByMode: {},
     attackAnim: null,
     needsFullMorph: false,
     seqFireQueue: [],
@@ -201,8 +202,7 @@ export function getEffectiveHexStats(fighter: Fighter, hex: HexEntity): Effectiv
     else if (fighter.rotMode === 'random') spinMult = hex.randomRoll || 1.0;
   }
 
-  const isFortress =
-    fighter.specialActive?.type === 'defense' && isHexAnchored(fighter, hex);
+  const isFortress = isDefenseFortressActive(fighter) && isHexAnchored(fighter, hex);
   const isMeleeSpecial =
     fighter.specialActive?.type === 'melee' && isHexAnchored(fighter, hex);
   const hardScale = isFortress ? 0.6 : isMeleeSpecial ? 1.0 : S;
@@ -217,10 +217,29 @@ export function getEffectiveHexStats(fighter: Fighter, hex: HexEntity): Effectiv
 
 export const LOOSE_GRAVITY_SLOW_FACTOR = 0.20;
 export const LOOSE_GRAVITY_RANGE_MULT = 1.30 * 1.40;
+export const LOOSE_PRISM_SLOW_FACTOR = 0.60;
+
+export function isLooseGravityFieldActive(fighter: Fighter): boolean {
+  return (
+    fighter.specialActive?.type === 'loose' &&
+    (!fighter.specialActive.skillId || fighter.specialActive.skillId === 'loose:gravity_field')
+  );
+}
+
+export function isLoosePrismWebActive(fighter: Fighter): boolean {
+  return (
+    fighter.specialActive?.type === 'loose' &&
+    fighter.specialActive.skillId === 'loose:prism_web'
+  );
+}
 
 export function getLooseGravityFieldRadius(fighter: Fighter): number {
   const currentLooseRing = (PLAYER_RADIUS + 24 + BASE_HEX_RADIUS * fighter.currentScale * 1.15) * 1.20;
   return currentLooseRing * LOOSE_GRAVITY_RANGE_MULT;
+}
+
+export function getLoosePrismLinkRange(fighter: Fighter): number {
+  return getLooseGravityFieldRadius(fighter) * 2;
 }
 
 export function getLooseOrbitRadius(fighter: Fighter): number {
@@ -234,8 +253,170 @@ export function isInsideLooseGravityField(
   y: number,
   entityRadius = 0
 ): boolean {
-  if (caster.specialActive?.type !== 'loose') return false;
+  if (!isLooseGravityFieldActive(caster)) return false;
   return dist(caster.x, caster.y, x, y) <= getLooseGravityFieldRadius(caster) + entityRadius;
+}
+
+export interface PrismWebCluster {
+  nodes: HexEntity[];
+  hull: HexEntity[];
+  edges: Array<[HexEntity, HexEntity]>;
+  isClosed: boolean;
+}
+
+export function distPointToSegment(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): { dist: number; cx: number; cy: number } {
+  const abx = bx - ax;
+  const aby = by - ay;
+  const lenSq = abx * abx + aby * aby;
+  if (lenSq <= 1e-6) {
+    return { dist: Math.hypot(px - ax, py - ay), cx: ax, cy: ay };
+  }
+  const t = Math.max(0, Math.min(1, ((px - ax) * abx + (py - ay) * aby) / lenSq));
+  const cx = ax + abx * t;
+  const cy = ay + aby * t;
+  return { dist: Math.hypot(px - cx, py - cy), cx, cy };
+}
+
+function cross2D(o: HexEntity, a: HexEntity, b: HexEntity): number {
+  return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+}
+
+function computeConvexHullHexes(nodes: HexEntity[]): HexEntity[] {
+  const pts = [...nodes].sort((a, b) => (a.x !== b.x ? a.x - b.x : a.y - b.y));
+  if (pts.length <= 2) return pts;
+
+  const lower: HexEntity[] = [];
+  for (const p of pts) {
+    while (lower.length >= 2 && cross2D(lower[lower.length - 2], lower[lower.length - 1], p) <= 1e-3) {
+      lower.pop();
+    }
+    lower.push(p);
+  }
+
+  const upper: HexEntity[] = [];
+  for (let i = pts.length - 1; i >= 0; i--) {
+    const p = pts[i];
+    while (upper.length >= 2 && cross2D(upper[upper.length - 2], upper[upper.length - 1], p) <= 1e-3) {
+      upper.pop();
+    }
+    upper.push(p);
+  }
+
+  lower.pop();
+  upper.pop();
+  const hull = lower.concat(upper);
+  if (hull.length < 3) {
+    // Collinear fallback -> endpoints only
+    return [pts[0], pts[pts.length - 1]];
+  }
+  return hull;
+}
+
+export function computePrismWebClusters(fighter: Fighter): PrismWebCluster[] {
+  const planted = fighter.hexes.filter((h) => h.state === 'PLANTED');
+  if (planted.length < 2) return [];
+
+  const maxR = getLoosePrismLinkRange(fighter);
+  const visited = new Set<number>();
+  const clusters: PrismWebCluster[] = [];
+
+  for (const start of planted) {
+    if (visited.has(start.id)) continue;
+    const queue: HexEntity[] = [start];
+    const nodes: HexEntity[] = [];
+    visited.add(start.id);
+
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      nodes.push(cur);
+      for (const cand of planted) {
+        if (visited.has(cand.id)) continue;
+        if (dist(cur.x, cur.y, cand.x, cand.y) <= maxR) {
+          visited.add(cand.id);
+          queue.push(cand);
+        }
+      }
+    }
+
+    if (nodes.length < 2) continue;
+    if (nodes.length === 2) {
+      clusters.push({
+        nodes,
+        hull: [nodes[0], nodes[1]],
+        edges: [[nodes[0], nodes[1]]],
+        isClosed: false,
+      });
+      continue;
+    }
+
+    const hull = computeConvexHullHexes(nodes);
+    if (hull.length < 3) {
+      clusters.push({
+        nodes,
+        hull,
+        edges: [[hull[0], hull[hull.length - 1]]],
+        isClosed: false,
+      });
+    } else {
+      const edges: Array<[HexEntity, HexEntity]> = [];
+      for (let i = 0; i < hull.length; i++) {
+        edges.push([hull[i], hull[(i + 1) % hull.length]]);
+      }
+      clusters.push({ nodes, hull, edges, isClosed: true });
+    }
+  }
+
+  return clusters;
+}
+
+export function isInsideLoosePrismWeb(
+  caster: Fighter,
+  x: number,
+  y: number,
+  entityRadius = 0,
+): boolean {
+  if (!isLoosePrismWebActive(caster)) return false;
+  const clusters = computePrismWebClusters(caster);
+  for (const c of clusters) {
+    if (!c.isClosed || c.hull.length < 3) continue;
+    let inside = true;
+    for (let i = 0; i < c.hull.length; i++) {
+      const a = c.hull[i];
+      const b = c.hull[(i + 1) % c.hull.length];
+      const cross = (b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x);
+      if (cross < -1e-3) {
+        inside = false;
+        break;
+      }
+    }
+    if (inside) return true;
+    if (entityRadius > 0) {
+      for (const [a, b] of c.edges) {
+        if (distPointToSegment(x, y, a.x, a.y, b.x, b.y).dist <= entityRadius) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+export function getEnemyLooseSlowFactor(
+  opponent: Fighter,
+  x: number,
+  y: number,
+  entityRadius = 0,
+): number {
+  if (isInsideLooseGravityField(opponent, x, y, entityRadius)) return LOOSE_GRAVITY_SLOW_FACTOR;
+  if (isInsideLoosePrismWeb(opponent, x, y, entityRadius)) return LOOSE_PRISM_SLOW_FACTOR;
+  return 1.0;
 }
 
 export function isHexStolen(hex: HexEntity): boolean {
@@ -248,13 +429,53 @@ export function isHexAnchored(fighter: Fighter, hex: HexEntity): boolean {
   return true;
 }
 
+export const HEX_WALL_COUNT = 4;
+export const HEX_WALL_MAX_ACTIVE = 4;
+export const HEX_WALL_LIFETIME = 5.0;
+export const HEX_WALL_PLACE_CD = 0.5;
+
+export function isDefenseFortressActive(fighter: Fighter): boolean {
+  return (
+    fighter.specialActive?.type === 'defense' &&
+    (!fighter.specialActive.skillId || fighter.specialActive.skillId === 'defense:counter_fortress')
+  );
+}
+
+export function isDefenseHexWallActive(fighter: Fighter): boolean {
+  return (
+    fighter.specialActive?.type === 'defense' &&
+    fighter.specialActive.skillId === 'defense:hex_wall'
+  );
+}
+
+export function computeHexWallPositions(
+  casterX: number,
+  casterY: number,
+  angle: number,
+): Array<{ x: number; y: number }> {
+  const R = BASE_HEX_RADIUS;
+  const wallDist = PLAYER_RADIUS + R + 16;
+  const cx = casterX + Math.cos(angle) * wallDist;
+  const cy = casterY + Math.sin(angle) * wallDist;
+  const step = R * Math.sqrt(3);
+  const perp = angle + Math.PI * 0.5;
+  const px = Math.cos(perp);
+  const py = Math.sin(perp);
+  const out: Array<{ x: number; y: number }> = [];
+  const half = (HEX_WALL_COUNT - 1) * 0.5;
+  for (let i = 0; i < HEX_WALL_COUNT; i++) {
+    const off = (i - half) * step;
+    out.push({ x: cx + px * off, y: cy + py * off });
+  }
+  return out;
+}
+
 /**
  * Rule 2.1: Structural Resistance R_chan = H_base * S^-1.5 * (1 + 0.1 * adjCount) * K_anchor.
  * Defense Special (Pháo Đài Phản Xung): 150% physical scale while compressing hardness as S = 0.6!
  */
 export function getStructuralResistance(defender: Fighter, defHex: HexEntity): number {
-  const isFortress =
-    defender.specialActive?.type === 'defense' && isHexAnchored(defender, defHex);
+  const isFortress = isDefenseFortressActive(defender) && isHexAnchored(defender, defHex);
   const isMeleeSpecial =
     defender.specialActive?.type === 'melee' && isHexAnchored(defender, defHex);
   const S = isFortress ? 0.6 : isMeleeSpecial ? 1.0 : defender.currentScale;

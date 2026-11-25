@@ -1,7 +1,7 @@
 import { BASE_HEX_RADIUS } from '../../constants';
 import { clamp, dist } from '../../math/hexMath';
 import { constrainToHexArena } from '../../world/obstacles';
-import { computeLooseKineticEnergy, getEffectiveHexStats } from '../../world/structure';
+import { computeLooseKineticEnergy, getEffectiveHexStats, isLooseGravityFieldActive } from '../../world/structure';
 import type { Fighter, FireMode, HexEntity, MatchState } from '../../types';
 import type { AttackExecuteContext } from '../types';
 
@@ -19,7 +19,7 @@ export function launchHex(
 ): void {
   const stats = getEffectiveHexStats(fighter, hex);
   const range = getLooseLaunchRange(distFactor);
-  const looseOverdrive = fighter.specialActive?.type === 'loose' ? 1.30 : 1.0;
+  const looseOverdrive = isLooseGravityFieldActive(fighter) ? 1.30 : 1.0;
   const speed = 640 * stats.speedMult * looseOverdrive;
 
   const target = {

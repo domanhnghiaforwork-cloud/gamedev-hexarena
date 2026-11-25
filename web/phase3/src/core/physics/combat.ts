@@ -4,6 +4,7 @@ import {
   HEX_COOLDOWN,
   HEX_REGEN_DELAY,
   LOAD_SHARE_RATIO,
+  MATERIALS,
   PLAYER_RADIUS,
 } from '../constants';
 import { clamp, dist } from '../math/hexMath';
@@ -20,11 +21,13 @@ import {
   getAnchoredNeighbors,
   getEffectiveHexStats,
   getStructuralResistance,
+  isDefenseFortressActive,
   isHexAnchored,
   isHexStolen,
+  isLooseGravityFieldActive,
   runStructuralBFSAndReassemble,
 } from '../world/structure';
-import type { Fighter, HexEntity, MatchState, SfxKind } from '../types';
+import type { Fighter, HexEntity, MatchState, SfxKind, SummonedWall, SummonedWallHex } from '../types';
 
 function clashSfxForHexes(a: HexEntity, b: HexEntity): SfxKind {
   if (a.material.id === 'heavy' || b.material.id === 'heavy') return 'clashHeavy';
@@ -238,7 +241,7 @@ export function damageFighterBody(
     state.matchOver = true;
     state.winner = attacker.id;
     state.events.push({ type: 'matchEnd', playerWon: attacker.id === 'player' });
-  } else if (defender.specialActive?.type === 'defense') {
+  } else if (isDefenseFortressActive(defender)) {
     chargeShieldFortress(state, attacker, defender, 65);
   }
 }
@@ -264,7 +267,13 @@ export function computeDefenseNormal(def: Fighter, dh: HexEntity, ah: HexEntity)
   return { nx: cx, ny: cy };
 }
 
-export function isBodyShieldedAlongPath(px: number, py: number, def: Fighter, defR: number): boolean {
+export function isBodyShieldedAlongPath(
+  px: number,
+  py: number,
+  def: Fighter,
+  defR: number,
+  walls: SummonedWall[] = [],
+): boolean {
   const vx = def.x - px;
   const vy = def.y - py;
   const lenSq = vx * vx + vy * vy;
@@ -276,6 +285,18 @@ export function isBodyShieldedAlongPath(px: number, py: number, def: Fighter, de
     const nearY = py + vy * t;
     if (dist(dh.x, dh.y, nearX, nearY) < defR * 1.05) {
       return true;
+    }
+  }
+  const wallR = BASE_HEX_RADIUS;
+  for (const w of walls) {
+    for (const wh of w.hexes) {
+      if (wh.broken) continue;
+      const t = clamp(((wh.x - px) * vx + (wh.y - py) * vy) / lenSq, 0, 1);
+      const nearX = px + vx * t;
+      const nearY = py + vy * t;
+      if (dist(wh.x, wh.y, nearX, nearY) < wallR * 1.05) {
+        return true;
+      }
     }
   }
   return false;
@@ -295,7 +316,7 @@ export function computeEffectiveImpactAngle(
   if (def.form === 'loose' && def.rotMode === 'random') {
     theta = Math.min(Math.PI * 0.48, theta + ((24 + rng() * 22) * Math.PI) / 180);
   }
-  if (def.specialActive?.type === 'loose' && defHex && defHex.state === 'ORBIT') {
+  if (isLooseGravityFieldActive(def) && defHex && defHex.state === 'ORBIT') {
     theta = Math.min(Math.PI * 0.48, theta + (22 * Math.PI) / 180);
   }
   return theta;
@@ -307,10 +328,177 @@ function chargeShieldFortress(
   def: Fighter,
   absorbedEnergy: number,
 ): void {
-  if (def.specialActive?.type === 'defense') {
+  if (isDefenseFortressActive(def) && def.specialActive) {
     const add = clamp(absorbedEnergy * 0.75, 25, 110);
     def.specialActive.storedEnergy = Math.min(360, (def.specialActive.storedEnergy ?? 0) + add);
     triggerShieldMiniPulse(state, def, att, absorbedEnergy, applyHexDurabilityLoss);
+  }
+}
+
+function applyWallHexDurabilityLoss(
+  state: MatchState,
+  wh: SummonedWallHex,
+  wallOwnerId: Fighter['id'],
+  amount: number,
+): boolean {
+  if (wh.broken || amount <= 0) return false;
+  const dmg = Math.max(1, Math.round(amount));
+  wh.hp -= dmg;
+  wh.flashTimer = 0.16;
+  const col = wallOwnerId === 'player' ? '#2dd4bf' : '#fb7185';
+  if (wh.hp <= 0) {
+    wh.hp = 0;
+    wh.broken = true;
+    state.events.push({ type: 'shatter', x: wh.x, y: wh.y, color: col, radius: BASE_HEX_RADIUS });
+    state.events.push({ type: 'floatingText', x: wh.x, y: wh.y - 16, text: 'VỠ TƯỜNG!', color: '#fbbf24', scale: 0.95 });
+    state.events.push({ type: 'sfx', kind: 'shatter' });
+    state.events.push({ type: 'shake', amount: 5.5 });
+    return true;
+  }
+  state.events.push({ type: 'floatingText', x: wh.x, y: wh.y - 10, text: `-${dmg}`, color: '#cbd5e1', scale: 0.72 });
+  return false;
+}
+
+function getWallAdjCount(wall: SummonedWall, wh: SummonedWallHex): number {
+  let adj = 0;
+  for (const other of wall.hexes) {
+    if (other.broken || other.id === wh.id) continue;
+    if (Math.abs(other.id - wh.id) === 1) adj++;
+  }
+  return adj;
+}
+
+function resolveAttacksVsWalls(state: MatchState): void {
+  if (state.walls.length === 0) return;
+  const wallR = BASE_HEX_RADIUS;
+
+  for (const att of [state.player, state.enemy]) {
+    const attR = BASE_HEX_RADIUS * att.currentScale;
+    const attStance = getActiveStance(att);
+
+    // 1. Ranged Thrown / Guided Spear vs Enemy Walls
+    if (
+      attStance === 'ranged' &&
+      att.attackAnim &&
+      att.attackAnim.type === 'ranged' &&
+      att.attackAnim.phase !== 'ricochet'
+    ) {
+      const anim = att.attackAnim;
+      const isReturn = anim.phase === 'return';
+      const isGuided = anim.phase === 'guided';
+      const passDmgMult = isReturn ? 0.5 : isGuided ? 1.35 : 1.0;
+      const spearHexes = att.hexes.filter((h) => h.state === 'ASSEMBLED');
+      const dirX = Math.cos(anim.angle);
+      const dirY = Math.sin(anim.angle);
+
+      for (const w of state.walls) {
+        if (w.ownerId === att.id) continue;
+        for (const wh of w.hexes) {
+          if (wh.broken) continue;
+          const hitKey = -(10000 + w.id * 16 + wh.id);
+          if (!isGuided && anim.hitHexIds.has(hitKey)) continue;
+          if (isGuided && anim.guidedStunTimer > 0) continue;
+
+          const hitAh = spearHexes.find(
+            (ah) => !isCircleBlockedByObstacle(state.obstacles, ah.x, ah.y, attR * 0.35) && dist(ah.x, ah.y, wh.x, wh.y) < (attR + wallR) * 0.92,
+          );
+          if (!hitAh) continue;
+          anim.hitHexIds.add(hitKey);
+
+          const adj = getWallAdjCount(w, wh);
+          const rWall = MATERIALS.base.hard * (1 + 0.1 * adj) * 1.4;
+          const attStats = getEffectiveHexStats(att, hitAh);
+
+          if (anim.energy < rWall) {
+            applyWallHexDurabilityLoss(state, wh, w.ownerId, Math.round(attStats.damage * 1.2 * passDmgMult));
+            if (isGuided) {
+              anim.anchorX -= dirX * 18;
+              anim.anchorY -= dirY * 18;
+              anim.angle = Math.atan2(-dirY, -dirX) + (Math.random() - 0.5) * 0.7;
+              anim.guidedStunTimer = 0.25;
+              anim.hitHexIds.clear();
+            } else {
+              anim.energy = 0;
+              if (!isReturn) {
+                anim.anchorX -= dirX * 14;
+                anim.anchorY -= dirY * 14;
+                anim.phase = 'return';
+                anim.energy = anim.initialEnergy * 0.5;
+                anim.hitBody = false;
+                anim.hitHexIds.clear();
+              }
+            }
+            state.events.push({ type: 'sparks', x: wh.x, y: wh.y, color: '#2dd4bf', count: 8, speed: 220, size: 2.8 });
+            state.events.push({ type: 'sfx', kind: 'clash' });
+            break;
+          } else {
+            applyWallHexDurabilityLoss(state, wh, w.ownerId, wh.hp + 1);
+            anim.energy = Math.max(0, anim.energy - rWall);
+            state.events.push({ type: 'floatingText', x: wh.x, y: wh.y - 28, text: 'XUYÊN TƯỜNG!', color: '#fbbf24', scale: 0.9 });
+          }
+        }
+      }
+      continue;
+    }
+
+    // 2. Melee / Loose Projectiles vs Enemy Walls
+    for (const ah of att.hexes) {
+      if (ah.state === 'BROKEN' || isHexStolen(ah) || ah.hitCooldown > 0) continue;
+      const isLooseAttacking = ah.state === 'LAUNCHED' || (ah.state === 'RECALLING' && ah.isAutoReturning);
+      const isAssembledAttacking = ah.state === 'ASSEMBLED' && att.attackAnim !== null && !att.attackAnim.wallBlocked;
+      if (!isLooseAttacking && !isAssembledAttacking) continue;
+
+      let hitWall = false;
+      for (const w of state.walls) {
+        if (w.ownerId === att.id) continue;
+        for (const wh of w.hexes) {
+          if (wh.broken) continue;
+          const hitKey = -(10000 + w.id * 16 + wh.id);
+          if (isAssembledAttacking && att.attackAnim?.hitHexIds.has(hitKey)) continue;
+          if (dist(ah.x, ah.y, wh.x, wh.y) >= (attR + wallR) * 0.92) continue;
+
+          const attStats = getEffectiveHexStats(att, ah);
+          const adj = getWallAdjCount(w, wh);
+          const rWall = MATERIALS.base.hard * (1 + 0.1 * adj) * 1.4;
+
+          if (isLooseAttacking) {
+            if (ah.energy < rWall) {
+              applyWallHexDurabilityLoss(state, wh, w.ownerId, Math.round(attStats.damage * 1.1));
+              if (ah.autoReturn) {
+                ah.energy = 0;
+                ah.state = 'RECALLING';
+                ah.isAutoReturning = true;
+                ah.vx = 0;
+                ah.vy = 0;
+              } else {
+                ah.energy = 0;
+                ah.state = 'PLANTED';
+                ah.vx = 0;
+                ah.vy = 0;
+              }
+            } else {
+              applyWallHexDurabilityLoss(state, wh, w.ownerId, wh.hp + 1);
+              ah.energy = Math.max(0, ah.energy - rWall);
+            }
+            ah.hitCooldown = 0.25;
+            hitWall = true;
+          } else if (att.attackAnim) {
+            att.attackAnim.hitHexIds.add(hitKey);
+            const dmgMult = attStance === 'melee' ? 1.35 : 0.4;
+            applyWallHexDurabilityLoss(state, wh, w.ownerId, Math.round(attStats.damage * dmgMult));
+            if (attStance === 'defense') {
+              state.events.push({ type: 'sfx', kind: 'clash' });
+            } else {
+              state.events.push({ type: 'sfx', kind: 'clashHeavy' });
+            }
+            hitWall = true;
+          }
+          state.events.push({ type: 'sparks', x: (ah.x + wh.x) * 0.5, y: (ah.y + wh.y) * 0.5, color: '#2dd4bf', count: 7, speed: 190, size: 2.6 });
+          break;
+        }
+        if (hitWall) break;
+      }
+    }
   }
 }
 
@@ -336,6 +524,8 @@ function applyLooseSelfWear(
  * Full 4-Rule Emergent Combat Collision & Defense Physics Pipeline (Stance-Agnostic!).
  */
 export function resolveCombatCollisions(state: MatchState): void {
+  resolveAttacksVsWalls(state);
+
   const pairs: Array<[Fighter, Fighter]> = [
     [state.player, state.enemy],
     [state.enemy, state.player],
@@ -482,7 +672,7 @@ export function resolveCombatCollisions(state: MatchState): void {
           const dBody = dist(ah.x, ah.y, def.x, def.y);
           if (dBody < attR * 0.85 + PLAYER_RADIUS) {
             if (segmentIntersectsAnyObstacle(state.obstacles, ah.x, ah.y, def.x, def.y, 0)) continue;
-            if (isBodyShieldedAlongPath(ah.x, ah.y, def, defR)) continue;
+            if (isBodyShieldedAlongPath(ah.x, ah.y, def, defR, state.walls)) continue;
 
             if (isGuided) anim.guidedHitBodyCd = 0.45;
             else anim.hitBody = true;
@@ -500,7 +690,7 @@ export function resolveCombatCollisions(state: MatchState): void {
     for (const ah of att.hexes) {
       if (ah.state === 'BROKEN' || isHexStolen(ah) || ah.hitCooldown > 0) continue;
 
-      const isLooseOverdriveOrbit = ah.state === 'ORBIT' && att.specialActive?.type === 'loose';
+      const isLooseOverdriveOrbit = ah.state === 'ORBIT' && isLooseGravityFieldActive(att);
       const isLooseAttacking =
         ah.state === 'LAUNCHED' ||
         ah.state === 'RECALLING' ||
@@ -699,7 +889,7 @@ export function resolveCombatCollisions(state: MatchState): void {
       const dBody = dist(ah.x, ah.y, def.x, def.y);
       if (dBody < attR * 0.85 + PLAYER_RADIUS) {
         if (!isHighFlightRecall && segmentIntersectsAnyObstacle(state.obstacles, ah.x, ah.y, def.x, def.y, 0)) continue;
-        if (isBodyShieldedAlongPath(ah.x, ah.y, def, defR)) continue;
+        if (isBodyShieldedAlongPath(ah.x, ah.y, def, defR, state.walls)) continue;
 
         if (isAssembledAttacking && att.attackAnim) {
           if (!att.attackAnim.hitBody) {

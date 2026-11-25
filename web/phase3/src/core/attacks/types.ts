@@ -88,7 +88,9 @@ export interface AttackModeDefinition {
 
 export const BUILTIN_SPECIAL_SKILL_IDS = {
   LOOSE_GRAVITY_FIELD: 'loose:gravity_field',
+  LOOSE_PRISM_WEB: 'loose:prism_web',
   RANGED_GUIDED_SPEAR: 'ranged:guided_spear',
   MELEE_PARRY_DISARM: 'melee:parry_disarm',
   DEFENSE_COUNTER_FORTRESS: 'defense:counter_fortress',
+  DEFENSE_HEX_WALL: 'defense:hex_wall',
 } as const;

@@ -94,8 +94,23 @@ export function getFighterSpecialKey(fighter: Fighter): SpecialSkillKey {
   return getFighterAttackModeId(fighter);
 }
 
+export interface FighterSpecialSelectionInfo {
+  modeId: AttackModeId;
+  skills: SpecialSkillDefinition[];
+  skill: SpecialSkillDefinition;
+  index: number;
+  total: number;
+}
+
 export function resolveFighterSpecialSkill(fighter: Fighter): SpecialSkillDefinition {
   const modeId = getFighterAttackModeId(fighter);
+  const chosenId = fighter.selectedSpecialByMode?.[modeId];
+  if (chosenId) {
+    const chosen = specialSkillMap.get(chosenId);
+    if (chosen && chosen.modeId === modeId) {
+      return chosen;
+    }
+  }
   const bp = getActiveBlueprint(fighter);
   if (bp?.specialSkillId) {
     const customSkill = specialSkillMap.get(bp.specialSkillId);
@@ -104,6 +119,44 @@ export function resolveFighterSpecialSkill(fighter: Fighter): SpecialSkillDefini
     }
   }
   return getDefaultSpecialSkillForMode(modeId);
+}
+
+export function getFighterSelectedSpecialInfo(fighter: Fighter): FighterSpecialSelectionInfo {
+  const modeId = getFighterAttackModeId(fighter);
+  const skills = getSpecialSkillsForMode(modeId);
+  const skill = resolveFighterSpecialSkill(fighter);
+  const idx = skills.findIndex((s) => s.id === skill.id);
+  return {
+    modeId,
+    skills: skills.length > 0 ? skills : [skill],
+    skill,
+    index: idx >= 0 ? idx : 0,
+    total: Math.max(1, skills.length),
+  };
+}
+
+export function setFighterSpecialSkill(
+  state: MatchState,
+  fighter: Fighter,
+  skillId: SpecialSkillId,
+  modeId?: AttackModeId,
+): SpecialSkillDefinition | null {
+  const targetMode = modeId ?? getFighterAttackModeId(fighter);
+  const skill = specialSkillMap.get(skillId);
+  if (!skill || skill.modeId !== targetMode) return null;
+  if (!fighter.selectedSpecialByMode) fighter.selectedSpecialByMode = {};
+  fighter.selectedSpecialByMode[targetMode] = skill.id;
+  if (!fighter.isAI) state.events.push({ type: 'sfx', kind: 'uiClick' });
+  return skill;
+}
+
+export function cycleFighterSpecialSkill(state: MatchState, fighter: Fighter): SpecialSkillDefinition {
+  const info = getFighterSelectedSpecialInfo(fighter);
+  const next = info.skills[(info.index + 1) % info.skills.length] ?? info.skill;
+  if (!fighter.selectedSpecialByMode) fighter.selectedSpecialByMode = {};
+  fighter.selectedSpecialByMode[info.modeId] = next.id;
+  if (!fighter.isAI) state.events.push({ type: 'sfx', kind: 'uiClick' });
+  return next;
 }
 
 export function executeFighterAttack(
@@ -133,10 +186,20 @@ export function triggerFighterSpecial(
   state: MatchState,
   fighter: Fighter,
   applyHexDurabilityLossFn?: ApplyHexDurabilityLossFn,
+  overrideSkillId?: SpecialSkillId,
 ): boolean {
   if (state.matchOver) return false;
 
   const opp = fighter.id === 'player' ? state.enemy : state.player;
+  const activeModeId = getFighterAttackModeId(fighter);
+
+  if (overrideSkillId) {
+    const override = specialSkillMap.get(overrideSkillId);
+    if (override && override.modeId === activeModeId) {
+      if (!fighter.selectedSpecialByMode) fighter.selectedSpecialByMode = {};
+      fighter.selectedSpecialByMode[activeModeId] = override.id;
+    }
+  }
 
   // Allow an already-active special skill to handle reactivation (e.g., early Counter-Pulse release)
   if (fighter.specialActive) {
@@ -155,7 +218,9 @@ export function triggerFighterSpecial(
   }
 
   if (fighter.specialCooldown > 0) {
-    if (!fighter.isAI) state.events.push({ type: 'sfx', kind: 'cancel' });
+    if (!fighter.isAI) {
+      state.events.push({ type: 'sfx', kind: overrideSkillId ? 'uiClick' : 'cancel' });
+    }
     return false;
   }
 

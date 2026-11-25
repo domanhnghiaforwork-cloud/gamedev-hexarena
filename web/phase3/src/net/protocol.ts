@@ -16,11 +16,31 @@ import type {
   ScaleTier,
   SimEvent,
   SpecialActiveState,
+  SpecialSkillId,
+  SummonedWall,
 } from '@core/types';
 
 export type SeatId = 'player' | 'enemy';
 
 export type RoomPhase = 'room' | 'prep' | 'countdown' | 'playing';
+
+export type FriendStatus = 'offline' | 'lobby' | 'in_room' | 'playing_pvp' | 'playing_bot' | 'spectating';
+
+export interface FriendPresenceItem {
+  userId: number;
+  username: string;
+  status: FriendStatus;
+  roomCode?: string | null;
+  canSpectate: boolean;
+  spectatorCount: number;
+}
+
+export interface PvPInvitePayload {
+  fromUserId: number;
+  fromUsername: string;
+  roomCode: string;
+  hexCount: number;
+}
 
 export interface RoomParticipantState {
   name: string;
@@ -49,7 +69,8 @@ export type PvPAction =
   | { kind: 'select_all' }
   | { kind: 'attack'; angle: number; strength: number }
   | { kind: 'dash'; angle: number }
-  | { kind: 'special' }
+  | { kind: 'special'; skillId?: SpecialSkillId }
+  | { kind: 'set_special_skill'; modeId: AttackModeId; skillId: SpecialSkillId }
   | { kind: 'smart_recall' }
   | { kind: 'recall_hex'; hexId: number }
   | { kind: 'guided_waypoint'; wx: number; wy: number; withRipple: boolean }
@@ -80,7 +101,23 @@ export type ClientMsg =
   | { type: 'action'; action: PvPAction }
   | { type: 'rematch_request' }
   | { type: 'leave_room' }
-  | { type: 'ping'; t: number };
+  | { type: 'ping'; t: number }
+  | { type: 'auth_ws'; token: string }
+  | { type: 'logout_ws' }
+  | { type: 'presence_update'; status: 'lobby' | 'playing_bot' }
+  | { type: 'invite_friend'; friendUserId: number; roomCode: string }
+  | { type: 'decline_invite'; fromUserId: number; roomCode: string }
+  | { type: 'spectate_friend'; friendUserId: number }
+  | { type: 'stop_spectate' }
+  | {
+      type: 'bot_stream_init';
+      selfLoadout: PlayerLoadout;
+      oppLoadout: PlayerLoadout;
+      obstacles: Obstacle[];
+      snapshot: MatchSnapshot;
+    }
+  | { type: 'bot_stream_snapshot'; snapshot: MatchSnapshot }
+  | { type: 'bot_stream_end'; reason?: string };
 
 /** Lean hex payload (trails synthesized locally at 60/120fps on client -> ~70% smaller packets!) */
 export interface SerializedHex {
@@ -144,6 +181,7 @@ export interface SerializedFighter {
   specialCooldown: number;
   specialMaxCooldown: number;
   specialActive: SpecialActiveState | null;
+  selectedSpecialByMode?: Partial<Record<AttackModeId, SpecialSkillId>>;
   isAttacking: boolean;
   rangedAnim: SerializedRangedAnim | null;
   hexes: SerializedHex[];
@@ -162,6 +200,7 @@ export interface MatchSnapshot {
   stats?: MatchStats;
   self: SerializedFighter;
   opp: SerializedFighter;
+  walls?: SummonedWall[];
   events: SimEvent[];
 }
 
@@ -185,7 +224,32 @@ export type ServerMsg =
   | { type: 'snapshot'; snapshot: MatchSnapshot }
   | { type: 'rematch_status'; readyCount: number }
   | { type: 'opponent_left'; message: string }
-  | { type: 'pong'; t: number };
+  | { type: 'pong'; t: number }
+  | { type: 'auth_ok'; userId: number; username: string }
+  | { type: 'friends_presence_snapshot'; items: FriendPresenceItem[] }
+  | { type: 'friend_presence_update'; item: FriendPresenceItem }
+  | { type: 'friends_list_dirty' }
+  | { type: 'pvp_invite'; invite: PvPInvitePayload }
+  | { type: 'invite_sent'; targetUsername: string }
+  | { type: 'invite_declined'; byUsername: string }
+  | { type: 'invite_error'; message: string }
+  | {
+      type: 'spectate_start';
+      mode: 'pvp' | 'bot';
+      targetUserId: number;
+      targetName: string;
+      oppName: string;
+      selfLoadout: PlayerLoadout;
+      oppLoadout: PlayerLoadout;
+      obstacles: Obstacle[];
+      snapshot: MatchSnapshot;
+      spectatorCount: number;
+    }
+  | { type: 'spectate_snapshot'; snapshot: MatchSnapshot }
+  | { type: 'spectate_ended'; reason: string }
+  | { type: 'spectate_error'; message: string }
+  | { type: 'viewer_count_update'; count: number }
+  | { type: 'bot_stream_toggle'; active: boolean; spectatorCount: number };
 
 export function lerpAngle(a: number, b: number, t: number): number {
   return a + angleDiff(a, b) * t;
@@ -245,6 +309,7 @@ function serializeFighter(f: Fighter, flipIds: boolean): SerializedFighter {
     specialCooldown: r3(f.specialCooldown),
     specialMaxCooldown: f.specialMaxCooldown,
     specialActive: f.specialActive ? { ...f.specialActive } : null,
+    selectedSpecialByMode: { ...f.selectedSpecialByMode },
     isAttacking: f.attackAnim !== null,
     rangedAnim,
     hexes: f.hexes.map((h) => ({
@@ -355,6 +420,18 @@ export function buildSeatSnapshot(
     stats: mappedStats,
     self: serializeFighter(selfF, flip),
     opp: serializeFighter(oppF, flip),
+    walls: state.walls.map((w) => ({
+      ...w,
+      ownerId: swapId(w.ownerId, flip) ?? w.ownerId,
+      timer: r3(w.timer),
+      hexes: w.hexes.map((wh) => ({
+        ...wh,
+        x: r1(wh.x),
+        y: r1(wh.y),
+        hp: Math.round(wh.hp),
+        flashTimer: r3(wh.flashTimer),
+      })),
+    })),
     events: mappedEvents,
   };
 }

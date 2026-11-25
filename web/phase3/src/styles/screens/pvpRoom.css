@@ -434,3 +434,37 @@
   .pvp-flow-steps { justify-content: flex-start; }
   .countdown-ring { width: 136px; height: 136px; }
 }
+
+.pvp-quick-invite-wrap {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(148, 163, 184, 0.22);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.pvp-quick-invite-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: #7dd3fc;
+}
+.pvp-quick-invite-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.pvp-quick-invite-chip {
+  appearance: none;
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  background: rgba(14, 116, 144, 0.24);
+  color: #e0f2fe;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 99px;
+  cursor: pointer;
+}
+.pvp-quick-invite-chip:hover {
+  background: rgba(56, 189, 248, 0.36);
+  color: #fff;
+}

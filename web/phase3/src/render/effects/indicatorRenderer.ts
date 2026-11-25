@@ -1,7 +1,14 @@
 import { BASE_HEX_RADIUS, DASH_DURATION, DASH_SPEED, PLAYER_RADIUS } from '@core/constants';
 import { clamp } from '@core/math/hexMath';
 import { getLooseLaunchRange } from '@attacks/loose/attack';
-import { getActiveAnchorDist, getActiveStance } from '@core/world/structure';
+import {
+  computeHexWallPositions,
+  getActiveAnchorDist,
+  getActiveStance,
+  isDefenseFortressActive,
+  isDefenseHexWallActive,
+} from '@core/world/structure';
+import { drawHexPolygon } from '@render/world/arenaRenderer';
 import type { Fighter } from '@core/types';
 import type { ReticleStyle } from '@storage/profiles';
 
@@ -9,10 +16,37 @@ export function renderSkillIndicator(
   ctx: CanvasRenderingContext2D,
   f: Fighter,
   isCanceling: boolean,
+  isDesktop = false,
 ): void {
   // Hide normal aiming indicator during Guided Ranged Special (replaced by dashed weapon silhouette!)
   const stance = getActiveStance(f);
   if (stance === 'ranged' && f.attackAnim?.type === 'ranged' && f.attackAnim.phase === 'guided') {
+    return;
+  }
+
+  // Hex Wall Ghost Placement Preview (Desktop live cursor preview OR Mobile hold-drag preview)
+  if (!f.isAimingDash && isDefenseHexWallActive(f) && (f.isAiming || isDesktop)) {
+    const previewAng = f.isAiming ? f.aimAngle : f.facing;
+    const pts = computeHexWallPositions(f.x, f.y, previewAng);
+    const ready = f.attackCooldown <= 0;
+    const stroke = isCanceling ? '#fb7185' : ready ? '#2dd4bf' : '#fbbf24';
+    const fill = isCanceling
+      ? 'rgba(251, 113, 133, 0.20)'
+      : ready
+        ? 'rgba(45, 212, 191, 0.22)'
+        : 'rgba(251, 191, 36, 0.14)';
+
+    ctx.save();
+    ctx.strokeStyle = stroke;
+    ctx.fillStyle = fill;
+    ctx.lineWidth = ready ? 2.2 : 1.5;
+    ctx.setLineDash(ready ? [5, 4] : [3, 5]);
+    for (const p of pts) {
+      drawHexPolygon(ctx, p.x, p.y, BASE_HEX_RADIUS * 0.96, previewAng + Math.PI / 6);
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
     return;
   }
 
@@ -112,8 +146,7 @@ export function renderSkillIndicator(
     ctx.fill();
     ctx.stroke();
   } else if (stance === 'defense') {
-    const isFortress = f.specialActive?.type === 'defense';
-    if (!isFortress) {
+    if (!isDefenseFortressActive(f)) {
       ctx.restore();
       return;
     }

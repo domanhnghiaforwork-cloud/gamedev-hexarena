@@ -6,23 +6,30 @@ import {
   executeFighterAttack,
   executeFighterDash,
   findPlantedHexAtWorld,
+  getFighterAttackModeId,
+  getFighterSelectedSpecialInfo,
+  getSpecialSkillsForMode,
   issueGuidedWaypoint,
   recallSpecificHex,
   setFighterForm,
   setFighterRotMode,
   setFighterScale,
+  setFighterSpecialSkill,
   toggleSelectAllHexes,
   triggerFighterSpecial,
   triggerSmartRecall,
 } from '@attacks/index';
-import { getActiveStance } from '@core/world/structure';
-import type { FireMode, FormKey, GuidedSteerInput, MatchState, RotMode } from '@core/types';
+import { getActiveStance, isDefenseFortressActive, isDefenseHexWallActive } from '@core/world/structure';
+import type { AttackModeId, FireMode, FormKey, GuidedSteerInput, MatchState, RotMode } from '@core/types';
 import type { ContinuousInputPacket, PvPAction } from '@net/protocol';
 import type { MobileHUDConfig, PCControlConfig } from '@storage/profiles';
 import { getViewportSize } from '@ui/common/fullscreen';
 import {
   computeDesktopDockLayout,
   computeSmartMobileLayout,
+  getMobileSpecialRadialPos,
+  getPCSpecialOptionRects,
+  getPCSpecialRadialPos,
   type MobileComputedLayout,
   type PCComputedDock,
   type Rect,
@@ -36,6 +43,19 @@ export interface FormRadialOption {
   angle: number;
 }
 
+export interface SpecialRadialState {
+  active: boolean;
+  source: 'touch' | 'pc' | null;
+  pointerId: number | null;
+  originX: number;
+  originY: number;
+  pressTimeMs: number;
+  hoverIdx: number;
+  modeId: AttackModeId;
+}
+
+const SPECIAL_HOLD_MS = 165;
+
 export interface LiveInputState {
   mode: InputMode;
   manualLock: boolean;
@@ -47,8 +67,9 @@ export interface LiveInputState {
   joy: { pointerId: number | null; knobX: number; knobY: number; dx: number; dy: number };
   atk: { pointerId: number | null; knobX: number; knobY: number };
   dash: { pointerId: number | null; knobX: number; knobY: number };
-  arc: { pointerId: number | null; paintValue: boolean; lastSeg: number };
+  arc: { pointerId: null | number; paintValue: boolean; lastSeg: number };
   formRadial: { pointerId: number | null; hoverIdx: number; options: FormRadialOption[] };
+  specialRadial: SpecialRadialState;
   pcPaint: { pointerId: number | null; paintValue: boolean; lastSeg: number };
   desktopAimPointerId: number | null;
   desktopGuidedPointerId: number | null;
@@ -144,6 +165,16 @@ export class InputManager {
           { id: 'slot2', angle: -Math.PI * 0.40 },
           { id: 'slot3', angle: -Math.PI * 0.20 },
         ],
+      },
+      specialRadial: {
+        active: false,
+        source: null,
+        pointerId: null,
+        originX: 0,
+        originY: 0,
+        pressTimeMs: 0,
+        hoverIdx: -1,
+        modeId: 'loose',
       },
       pcPaint: { pointerId: null, paintValue: true, lastSeg: -1 },
       desktopAimPointerId: null,
@@ -259,6 +290,7 @@ export class InputManager {
     this.live.arc.pointerId = null;
     this.live.formRadial.pointerId = null;
     this.live.formRadial.hoverIdx = -1;
+    this.resetSpecialRadial();
     this.live.pcPaint.pointerId = null;
     this.live.desktopAimPointerId = null;
     this.live.desktopGuidedPointerId = null;
@@ -303,7 +335,7 @@ export class InputManager {
           }
           break;
         case 'set_scale':
-          if (player.specialActive?.type !== 'defense') {
+          if (!isDefenseFortressActive(player)) {
             player.targetScale = action.scale;
             state.events.push({ type: 'sfx', kind: 'uiClick' });
           }
@@ -312,6 +344,11 @@ export class InputManager {
           player.form = action.form;
           this.recomputeLayouts();
           state.events.push({ type: 'sfx', kind: 'snap' });
+          break;
+        case 'set_special_skill':
+          if (!player.selectedSpecialByMode) player.selectedSpecialByMode = {};
+          player.selectedSpecialByMode[action.modeId] = action.skillId;
+          state.events.push({ type: 'sfx', kind: 'uiClick' });
           break;
         default:
           break;
@@ -353,7 +390,10 @@ export class InputManager {
         executeFighterDash(state, player, action.angle);
         break;
       case 'special':
-        triggerFighterSpecial(state, player, applyHexDurabilityLoss);
+        triggerFighterSpecial(state, player, applyHexDurabilityLoss, action.skillId);
+        break;
+      case 'set_special_skill':
+        setFighterSpecialSkill(state, player, action.skillId, action.modeId);
         break;
       case 'smart_recall':
         triggerSmartRecall(state, player);
@@ -410,6 +450,19 @@ export class InputManager {
     const { player } = state;
     if (this.wheelCooldown > 0) this.wheelCooldown = Math.max(0, this.wheelCooldown - dt);
 
+    // Check Hold-to-Open Special Radial on both Mobile & PC
+    const sr = this.live.specialRadial;
+    if (sr.source !== null && !sr.active && performance.now() - sr.pressTimeMs >= SPECIAL_HOLD_MS) {
+      sr.active = true;
+      if (sr.source === 'pc') {
+        sr.originX = clamp(this.live.mouse.px, 130, Math.max(130, this.live.vw - 130));
+        sr.originY = clamp(this.live.mouse.py, 130, Math.max(130, this.live.vh - 130));
+      }
+    }
+    if (sr.active && sr.source === 'pc') {
+      this.updatePCSpecialRadialHover(this.live.mouse.px, this.live.mouse.py);
+    }
+
     if (this.paused || state.matchOver) {
       player.vx = 0;
       player.vy = 0;
@@ -453,7 +506,7 @@ export class InputManager {
       const dy = world.wy - player.y;
       if (Math.hypot(dx, dy) > 4) {
         const cursorAng = Math.atan2(dy, dx);
-        if (player.specialActive?.type === 'defense') {
+        if (isDefenseFortressActive(player)) {
           let diff = (cursorAng - player.facing + Math.PI) % (Math.PI * 2);
           if (diff < 0) diff += Math.PI * 2;
           diff -= Math.PI;
@@ -480,6 +533,72 @@ export class InputManager {
   private updateCancelHover(px: number, py: number): void {
     const cancel = this.live.mode === 'desktop' ? this.live.pcLayout.cancel : this.live.mobileLayout.cancel;
     this.live.cancelHovered = dist(px, py, cancel.cx, cancel.cy) <= cancel.r * 1.45;
+  }
+
+  private resetSpecialRadial(): void {
+    this.live.specialRadial.active = false;
+    this.live.specialRadial.source = null;
+    this.live.specialRadial.pointerId = null;
+    this.live.specialRadial.hoverIdx = -1;
+  }
+
+  private updateMobileSpecialRadialHover(px: number, py: number): void {
+    const sr = this.live.specialRadial;
+    const m = this.live.mobileLayout;
+    const skills = getSpecialSkillsForMode(sr.modeId);
+    if (dist(px, py, m.special.cx, m.special.cy) <= m.special.r * 0.80) {
+      sr.hoverIdx = -1;
+      return;
+    }
+    let hovered = -1;
+    let bestD = Infinity;
+    for (let idx = 0; idx < skills.length; idx++) {
+      const pos = getMobileSpecialRadialPos(m.special, m.baseScale, m.specialRotRad, idx, skills.length);
+      const d = dist(px, py, pos.x, pos.y);
+      if (d < bestD && d < pos.r * 2.25) {
+        bestD = d;
+        hovered = idx;
+      }
+    }
+    sr.hoverIdx = hovered;
+  }
+
+  private updatePCSpecialRadialHover(px: number, py: number): void {
+    const sr = this.live.specialRadial;
+    const skills = getSpecialSkillsForMode(sr.modeId);
+    if (dist(px, py, sr.originX, sr.originY) <= 24) {
+      sr.hoverIdx = -1;
+      return;
+    }
+    let hovered = -1;
+    let bestD = Infinity;
+    for (let idx = 0; idx < skills.length; idx++) {
+      const pos = getPCSpecialRadialPos(sr.originX, sr.originY, idx, skills.length);
+      const d = dist(px, py, pos.x, pos.y);
+      if (d < bestD && d < pos.r * 2.65) {
+        bestD = d;
+        hovered = idx;
+      }
+    }
+    sr.hoverIdx = hovered;
+  }
+
+  private commitSpecialRadialSelection(
+    modeId: AttackModeId,
+    hoverIdx: number,
+  ): void {
+    const state = this.getState();
+    const { player } = state;
+    const skills = getSpecialSkillsForMode(modeId);
+    const chosen = skills[hoverIdx];
+    if (!chosen) {
+      state.events.push({ type: 'sfx', kind: 'cancel' });
+      return;
+    }
+    this.dispatchAction({ kind: 'set_special_skill', modeId, skillId: chosen.id });
+    if (player.specialCooldown <= 0 && !player.specialActive) {
+      this.dispatchAction({ kind: 'special', skillId: chosen.id });
+    }
   }
 
   private cancelActiveAim(): void {
@@ -528,7 +647,7 @@ export class InputManager {
     this.live.atk.knobY = d > maxR ? atk.cy + (dy / d) * maxR : py;
     if (d > 8) {
       state.player.aimAngle = Math.atan2(dy, dx);
-      if (state.player.specialActive?.type !== 'defense') {
+      if (!isDefenseFortressActive(state.player)) {
         state.player.facing = state.player.aimAngle;
       }
       state.player.aimStrength = clamp(d / (maxR * 1.25), 0.12, 1.0);
@@ -537,7 +656,9 @@ export class InputManager {
       state.player.aimStrength = 0.5;
     }
     const isPureDefense =
-      getActiveStance(state.player) === 'defense' && state.player.specialActive?.type !== 'defense';
+      getActiveStance(state.player) === 'defense' &&
+      !isDefenseFortressActive(state.player) &&
+      !isDefenseHexWallActive(state.player);
     if (isPureDefense) {
       this.live.cancelHovered = false;
     } else {
@@ -574,12 +695,14 @@ export class InputManager {
     const dx = world.wx - state.player.x;
     const dy = world.wy - state.player.y;
     state.player.aimAngle = Math.atan2(dy, dx);
-    if (state.player.specialActive?.type !== 'defense') {
+    if (!isDefenseFortressActive(state.player)) {
       state.player.facing = state.player.aimAngle;
     }
     state.player.aimStrength = clamp((Math.hypot(dx, dy) - 120) / 360, 0, 1);
     const isPureDefense =
-      getActiveStance(state.player) === 'defense' && state.player.specialActive?.type !== 'defense';
+      getActiveStance(state.player) === 'defense' &&
+      !isDefenseFortressActive(state.player) &&
+      !isDefenseHexWallActive(state.player);
     if (isPureDefense) {
       this.live.cancelHovered = false;
     } else {
@@ -701,6 +824,17 @@ export class InputManager {
           });
         }
         this.live.formRadial.hoverIdx = hovered;
+      } else if (
+        this.live.specialRadial.source === 'touch' &&
+        e.pointerId === this.live.specialRadial.pointerId
+      ) {
+        const m = this.live.mobileLayout;
+        if (!this.live.specialRadial.active && dist(px, py, m.special.cx, m.special.cy) > m.special.r * 0.72) {
+          this.live.specialRadial.active = true;
+        }
+        if (this.live.specialRadial.active) {
+          this.updateMobileSpecialRadialHover(px, py);
+        }
       }
     });
 
@@ -740,9 +874,16 @@ export class InputManager {
       if (state.matchOver) return;
       if (!this.live.manualLock && this.live.mode !== 'desktop') this.setMode('desktop', false);
 
-      if (k === 'escape' && (state.player.isAiming || state.player.isAimingDash)) {
-        this.cancelActiveAim();
-        return;
+      if (k === 'escape') {
+        if (this.live.specialRadial.source === 'pc') {
+          this.resetSpecialRadial();
+          state.events.push({ type: 'sfx', kind: 'cancel' });
+          return;
+        }
+        if (state.player.isAiming || state.player.isAimingDash) {
+          this.cancelActiveAim();
+          return;
+        }
       }
 
       const kb = this.getPCConfig().keybinds;
@@ -765,6 +906,17 @@ export class InputManager {
         });
       } else if (k === kb.special) {
         this.dispatchAction({ kind: 'special' });
+      } else if (k === kb.cycleSpecial) {
+        this.live.specialRadial = {
+          active: false,
+          source: 'pc',
+          pointerId: null,
+          originX: clamp(this.live.mouse.px, 130, Math.max(130, this.live.vw - 130)),
+          originY: clamp(this.live.mouse.py, 130, Math.max(130, this.live.vh - 130)),
+          pressTimeMs: performance.now(),
+          hoverIdx: -1,
+          modeId: getFighterAttackModeId(state.player),
+        };
       } else if (k === kb.cycleFire && state.player.form === 'loose') {
         const order: FireMode[] = ['xayah', 'seq', 'volley'];
         this.dispatchAction({
@@ -791,7 +943,28 @@ export class InputManager {
     });
 
     window.addEventListener('keyup', (e) => {
-      this.keys.delete(e.key.toLowerCase());
+      const k = e.key.toLowerCase();
+      this.keys.delete(k);
+
+      const kb = this.getPCConfig().keybinds;
+      if (k === kb.cycleSpecial && this.live.specialRadial.source === 'pc') {
+        const wasActive = this.live.specialRadial.active;
+        const hoverIdx = this.live.specialRadial.hoverIdx;
+        const modeId = this.live.specialRadial.modeId;
+        this.resetSpecialRadial();
+
+        const state = this.getState();
+        if (this.paused || state.matchOver) return;
+        if (!wasActive) {
+          const info = getFighterSelectedSpecialInfo(state.player);
+          const next = info.skills[(info.index + 1) % info.skills.length];
+          if (next) {
+            this.dispatchAction({ kind: 'set_special_skill', modeId: info.modeId, skillId: next.id });
+          }
+        } else {
+          this.commitSpecialRadialSelection(modeId, hoverIdx);
+        }
+      }
     });
 
     window.addEventListener('blur', () => this.clearAllInputs());
@@ -838,6 +1011,19 @@ export class InputManager {
       this.triggerKeyboardDash();
       return;
     }
+
+    const spInfo = getFighterSelectedSpecialInfo(player);
+    const spPills = getPCSpecialOptionRects(pc.specialBtn, pc.scale, spInfo.skills.length);
+    for (const pill of spPills) {
+      if (pointInRectPadded(px, py, pill, 3)) {
+        const chosen = spInfo.skills[pill.index];
+        if (chosen) {
+          this.dispatchAction({ kind: 'set_special_skill', modeId: spInfo.modeId, skillId: chosen.id });
+        }
+        return;
+      }
+    }
+
     if (pointInRect(px, py, pc.specialBtn)) {
       this.dispatchAction({ kind: 'special' });
       return;
@@ -882,8 +1068,16 @@ export class InputManager {
       return;
     }
 
-    // Pure Defense Stance cannot trigger normal attacks (only Pháo Đài Phản Xung special can detonate)
-    if (getActiveStance(player) === 'defense' && player.specialActive?.type !== 'defense') {
+    // Hex Wall (Defense Ulti #2): move cursor to aim ghost preview, left-click places wall immediately!
+    if (isDefenseHexWallActive(player)) {
+      const world = this.screenToWorld(px, py);
+      const cursorAng = Math.atan2(world.wy - player.y, world.wx - player.x);
+      this.dispatchAction({ kind: 'attack', angle: cursorAng, strength: 1.0 });
+      return;
+    }
+
+    // Pure Defense Stance cannot trigger normal attacks (only Pháo Đài / Tường Lục Giác can trigger)
+    if (getActiveStance(player) === 'defense' && !isDefenseFortressActive(player)) {
       return;
     }
 
@@ -915,9 +1109,19 @@ export class InputManager {
       }
     }
 
-    // 3. Special Skill Button (Ulti)
+    // 3. Special Skill Button (Tap to cast · Hold & drag to select / swap Ulti)
     if (dist(px, py, m.special.cx, m.special.cy) <= m.special.r + 8) {
-      this.dispatchAction({ kind: 'special' });
+      this.live.specialRadial = {
+        active: false,
+        source: 'touch',
+        pointerId: e.pointerId,
+        originX: m.special.cx,
+        originY: m.special.cy,
+        pressTimeMs: performance.now(),
+        hoverIdx: -1,
+        modeId: getFighterAttackModeId(player),
+      };
+      this.canvas.setPointerCapture(e.pointerId);
       return;
     }
 
@@ -969,7 +1173,10 @@ export class InputManager {
 
     // 7. Attack / Shield-Aim Pad
     if (dist(px, py, m.atk.cx, m.atk.cy) <= m.atk.r + 14) {
-      const isPureDefense = getActiveStance(player) === 'defense' && player.specialActive?.type !== 'defense';
+      const isPureDefense =
+        getActiveStance(player) === 'defense' &&
+        !isDefenseFortressActive(player) &&
+        !isDefenseHexWallActive(player);
       this.live.atk.pointerId = e.pointerId;
       player.isAiming = !isPureDefense;
       this.updateAttackDrag(px, py);
@@ -1004,7 +1211,10 @@ export class InputManager {
       this.live.atk.knobX = this.live.mobileLayout.atk.cx;
       this.live.atk.knobY = this.live.mobileLayout.atk.cy;
 
-      const isPureDefense = getActiveStance(player) === 'defense' && player.specialActive?.type !== 'defense';
+      const isPureDefense =
+        getActiveStance(player) === 'defense' &&
+        !isDefenseFortressActive(player) &&
+        !isDefenseHexWallActive(player);
       const isGuidedRanged =
         getActiveStance(player) === 'ranged' &&
         player.attackAnim?.type === 'ranged' &&
@@ -1060,6 +1270,21 @@ export class InputManager {
         }
       }
       this.live.formRadial.hoverIdx = -1;
+    } else if (
+      this.live.specialRadial.source === 'touch' &&
+      e.pointerId === this.live.specialRadial.pointerId
+    ) {
+      const wasActive = this.live.specialRadial.active;
+      const hoverIdx = this.live.specialRadial.hoverIdx;
+      const modeId = this.live.specialRadial.modeId;
+      this.resetSpecialRadial();
+      if (!isCancel) {
+        if (!wasActive) {
+          this.dispatchAction({ kind: 'special' });
+        } else {
+          this.commitSpecialRadialSelection(modeId, hoverIdx);
+        }
+      }
     }
   }
 }

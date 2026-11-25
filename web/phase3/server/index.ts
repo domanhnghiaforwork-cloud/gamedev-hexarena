@@ -5,6 +5,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { resizeLoadoutHexCount, sanitizeLoadout } from '../src/core/world/blueprint';
 import { UserStore } from './db';
 import { applyHexDurabilityLoss } from '../src/core/physics/combat';
+import { isDefenseFortressActive } from '../src/core/world/structure';
 import { FIXED_DT, MAX_HEX_COUNT, MIN_HEX_COUNT, PLAYER_MOVE_SPEED } from '../src/core/constants';
 import { clamp } from '../src/core/math/hexMath';
 import { createMatchState, stepSimulation } from '../src/core/physics/simulation';
@@ -17,15 +18,26 @@ import {
   setFighterForm,
   setFighterRotMode,
   setFighterScale,
+  setFighterSpecialSkill,
   toggleSelectAllHexes,
   triggerFighterSpecial,
   triggerSmartRecall,
 } from '../src/core/attacks/index';
-import type { Fighter, GuidedSteerInput, MatchState, PlayerLoadout, SimEvent } from '../src/core/types';
+import type {
+  Fighter,
+  GuidedSteerInput,
+  MatchState,
+  Obstacle,
+  PlayerLoadout,
+  SimEvent,
+} from '../src/core/types';
 import {
   buildSeatSnapshot,
   type ClientMsg,
   type ContinuousInputPacket,
+  type FriendPresenceItem,
+  type FriendStatus,
+  type MatchSnapshot,
   type PvPAction,
   type RoomPhase,
   type RoomStatePayload,
@@ -61,14 +73,201 @@ interface Room {
   lastCountdownInt: number;
   host: PeerSlot;
   guest: PeerSlot | null;
+  spectators: Map<WebSocket, { seat: SeatId; targetUserId: number }>;
   state: MatchState | null;
   tick: number;
   pendingEvents: SimEvent[];
   createdAt: number;
 }
 
+interface BotStreamMeta {
+  selfLoadout: PlayerLoadout;
+  oppLoadout: PlayerLoadout;
+  obstacles: Obstacle[];
+  lastSnapshot: MatchSnapshot;
+}
+
+interface OnlineSession {
+  userId: number;
+  username: string;
+  ws: WebSocket;
+  clientStatus: 'lobby' | 'playing_bot';
+  spectating:
+    | { mode: 'pvp'; roomCode: string; targetUserId: number }
+    | { mode: 'bot'; targetUserId: number }
+    | null;
+  botStreamMeta: BotStreamMeta | null;
+  botSpectators: Set<WebSocket>;
+}
+
 const rooms = new Map<string, Room>();
 const peerRoomMap = new Map<WebSocket, { room: Room; seat: SeatId }>();
+const wsAuthMap = new Map<WebSocket, number>();
+const onlineSessions = new Map<number, OnlineSession>();
+
+function getSessionByWs(ws: WebSocket): OnlineSession | null {
+  const uid = wsAuthMap.get(ws);
+  if (uid === undefined) return null;
+  return onlineSessions.get(uid) ?? null;
+}
+
+function getSpectatorCountForUser(userId: number): number {
+  const session = onlineSessions.get(userId);
+  if (!session) return 0;
+  const peer = peerRoomMap.get(session.ws);
+  if (peer) {
+    let cnt = 0;
+    for (const s of peer.room.spectators.values()) {
+      if (s.targetUserId === userId) cnt++;
+    }
+    return cnt;
+  }
+  return session.botSpectators.size;
+}
+
+function computeUserPresence(userId: number, usernameFallback = ''): FriendPresenceItem {
+  const session = onlineSessions.get(userId);
+  if (!session || session.ws.readyState !== WebSocket.OPEN) {
+    return {
+      userId,
+      username: usernameFallback,
+      status: 'offline',
+      roomCode: null,
+      canSpectate: false,
+      spectatorCount: 0,
+    };
+  }
+
+  let status: FriendStatus = session.clientStatus;
+  let roomCode: string | null = null;
+  let canSpectate = false;
+
+  const peer = peerRoomMap.get(session.ws);
+  if (peer) {
+    roomCode = peer.room.code;
+    if ((peer.room.phase === 'playing' || peer.room.phase === 'countdown') && peer.room.state) {
+      status = 'playing_pvp';
+      canSpectate = true;
+    } else {
+      status = 'in_room';
+    }
+  } else if (session.spectating) {
+    status = 'spectating';
+  } else if (session.clientStatus === 'playing_bot') {
+    status = 'playing_bot';
+    canSpectate = true;
+  } else {
+    status = 'lobby';
+  }
+
+  return {
+    userId,
+    username: session.username,
+    status,
+    roomCode,
+    canSpectate,
+    spectatorCount: getSpectatorCountForUser(userId),
+  };
+}
+
+function notifyFriendsPresence(userId: number): void {
+  const user = userStore.getById(userId);
+  const item = computeUserPresence(userId, user?.username ?? '');
+  const friendIds = userStore.getAcceptedFriendIds(userId);
+  for (const fid of friendIds) {
+    const fSession = onlineSessions.get(fid);
+    if (fSession && fSession.ws.readyState === WebSocket.OPEN) {
+      sendMsg(fSession.ws, { type: 'friend_presence_update', item });
+    }
+  }
+}
+
+function notifyUserFriendsPresence(ws: WebSocket, uid?: number): void {
+  const targetUid = uid ?? wsAuthMap.get(ws);
+  if (targetUid !== undefined) notifyFriendsPresence(targetUid);
+}
+
+function notifyViewerCount(targetUserId: number): void {
+  const target = onlineSessions.get(targetUserId);
+  if (!target || target.ws.readyState !== WebSocket.OPEN) return;
+  const count = getSpectatorCountForUser(targetUserId);
+  sendMsg(target.ws, { type: 'viewer_count_update', count });
+}
+
+function sendFriendsPresenceSnapshot(session: OnlineSession): void {
+  const data = userStore.listFriends(session.userId);
+  const items = data.friends.map((f) => computeUserPresence(f.userId, f.username));
+  sendMsg(session.ws, { type: 'friends_presence_snapshot', items });
+}
+
+function stopSpectating(ws: WebSocket, silent = false): void {
+  const session = getSessionByWs(ws);
+  if (!session || !session.spectating) return;
+
+  const prev = session.spectating;
+  session.spectating = null;
+
+  if (prev.mode === 'pvp') {
+    const room = rooms.get(prev.roomCode);
+    if (room) {
+      room.spectators.delete(ws);
+    }
+  } else {
+    const target = onlineSessions.get(prev.targetUserId);
+    if (target) {
+      target.botSpectators.delete(ws);
+      if (target.botSpectators.size === 0) {
+        target.botStreamMeta = null;
+        sendMsg(target.ws, { type: 'bot_stream_toggle', active: false, spectatorCount: 0 });
+      } else {
+        sendMsg(target.ws, {
+          type: 'bot_stream_toggle',
+          active: true,
+          spectatorCount: target.botSpectators.size,
+        });
+      }
+    }
+  }
+
+  notifyViewerCount(prev.targetUserId);
+  notifyFriendsPresence(prev.targetUserId);
+  if (!silent) {
+    notifyFriendsPresence(session.userId);
+  }
+}
+
+function endBotSpectators(hostSession: OnlineSession, reason: string): void {
+  if (hostSession.botSpectators.size === 0 && !hostSession.botStreamMeta) return;
+  const specs = Array.from(hostSession.botSpectators);
+  hostSession.botSpectators.clear();
+  hostSession.botStreamMeta = null;
+  for (const specWs of specs) {
+    const specSession = getSessionByWs(specWs);
+    if (specSession) {
+      specSession.spectating = null;
+    }
+    sendMsg(specWs, { type: 'spectate_ended', reason });
+    if (specSession) {
+      notifyFriendsPresence(specSession.userId);
+    }
+  }
+  sendMsg(hostSession.ws, { type: 'bot_stream_toggle', active: false, spectatorCount: 0 });
+  notifyViewerCount(hostSession.userId);
+}
+
+function cleanupSession(ws: WebSocket, notifyOffline: boolean): void {
+  const session = getSessionByWs(ws);
+  if (!session) return;
+  stopSpectating(ws, true);
+  endBotSpectators(session, 'Bạn bè đã thoát hoặc mất kết nối.');
+  wsAuthMap.delete(ws);
+  if (onlineSessions.get(session.userId)?.ws === ws) {
+    onlineSessions.delete(session.userId);
+    if (notifyOffline) {
+      notifyFriendsPresence(session.userId);
+    }
+  }
+}
 
 function defaultInput(): ContinuousInputPacket {
   return {
@@ -222,6 +421,27 @@ function startRoomMatch(room: Room): void {
 
   sendMsg(room.host.ws, { type: 'countdown_tick', value: 3 });
   sendMsg(room.guest.ws, { type: 'countdown_tick', value: 3 });
+
+  // Notify any attached PvP spectators (e.g. during rematch)
+  for (const [specWs, specInfo] of room.spectators.entries()) {
+    const targetSeat = specInfo.seat;
+    const isHostTarget = targetSeat === 'player';
+    sendMsg(specWs, {
+      type: 'spectate_start',
+      mode: 'pvp',
+      targetUserId: specInfo.targetUserId,
+      targetName: isHostTarget ? room.host.name : room.guest.name,
+      oppName: isHostTarget ? room.guest.name : room.host.name,
+      selfLoadout: isHostTarget ? room.host.loadout : room.guest.loadout,
+      oppLoadout: isHostTarget ? room.guest.loadout : room.host.loadout,
+      obstacles: state.obstacles,
+      snapshot: isHostTarget ? hostSnap : guestSnap,
+      spectatorCount: getSpectatorCountForUser(specInfo.targetUserId),
+    });
+  }
+
+  notifyUserFriendsPresence(room.host.ws);
+  notifyUserFriendsPresence(room.guest.ws);
 }
 
 function applyContinuousInput(fighter: Fighter, peer: PeerSlot, dt: number): GuidedSteerInput {
@@ -244,7 +464,7 @@ function applyContinuousInput(fighter: Fighter, peer: PeerSlot, dt: number): Gui
   fighter.isAimingDash = input.isAimingDash;
   fighter.dashAimAngle = input.dashAimAngle;
 
-  if (fighter.specialActive?.type === 'defense') {
+  if (isDefenseFortressActive(fighter)) {
     let diff = (input.facing - fighter.facing + Math.PI) % (Math.PI * 2);
     if (diff < 0) diff += Math.PI * 2;
     diff -= Math.PI;
@@ -289,7 +509,10 @@ function applyAction(state: MatchState, fighter: Fighter, action: PvPAction): vo
       executeFighterDash(state, fighter, action.angle);
       break;
     case 'special':
-      triggerFighterSpecial(state, fighter, applyHexDurabilityLoss);
+      triggerFighterSpecial(state, fighter, applyHexDurabilityLoss, action.skillId);
+      break;
+    case 'set_special_skill':
+      setFighterSpecialSkill(state, fighter, action.skillId, action.modeId);
       break;
     case 'smart_recall':
       triggerSmartRecall(state, fighter);
@@ -308,6 +531,22 @@ function applyAction(state: MatchState, fighter: Fighter, action: PvPAction): vo
   }
 }
 
+function detachRoomSpectators(room: Room, reason: string): void {
+  if (room.spectators.size === 0) return;
+  const entries = Array.from(room.spectators.entries());
+  room.spectators.clear();
+  for (const [specWs] of entries) {
+    const specSession = getSessionByWs(specWs);
+    if (specSession) {
+      specSession.spectating = null;
+    }
+    sendMsg(specWs, { type: 'spectate_ended', reason });
+    if (specSession) {
+      notifyFriendsPresence(specSession.userId);
+    }
+  }
+}
+
 function cleanupPeer(ws: WebSocket): void {
   const entry = peerRoomMap.get(ws);
   if (!entry) return;
@@ -320,8 +559,10 @@ function cleanupPeer(ws: WebSocket): void {
     if (room.host.ws.readyState === WebSocket.OPEN) {
       broadcastRoomState(room);
     } else {
+      detachRoomSpectators(room, 'Phòng đấu đã đóng.');
       rooms.delete(room.code);
     }
+    notifyUserFriendsPresence(ws);
     return;
   }
 
@@ -332,8 +573,11 @@ function cleanupPeer(ws: WebSocket): void {
       type: 'opponent_left',
       message: seat === 'player' ? 'Chủ phòng đã đóng phòng đấu.' : 'Đối thủ đã rời phòng đấu.',
     });
+    notifyUserFriendsPresence(other.ws);
   }
+  detachRoomSpectators(room, 'Trận đấu PvP đã kết thúc.');
   rooms.delete(room.code);
+  notifyUserFriendsPresence(ws);
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -469,6 +713,91 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (method === 'GET' && url === '/api/friends') {
+      const claim = getBearerUser(req);
+      if (!claim) {
+        sendJson(res, 401, { error: 'Chưa đăng nhập.' });
+        return;
+      }
+      const data = userStore.listFriends(claim.uid);
+      const presence = data.friends.map((f) => computeUserPresence(f.userId, f.username));
+      sendJson(res, 200, { ...data, presence });
+      return;
+    }
+
+    if (method === 'POST' && url === '/api/friends/request') {
+      const claim = getBearerUser(req);
+      if (!claim) {
+        sendJson(res, 401, { error: 'Chưa đăng nhập.' });
+        return;
+      }
+      const body = await readJsonBody(req);
+      const result = userStore.sendFriendRequest(claim.uid, String(body.username || ''));
+      if (!result.ok) {
+        sendJson(res, 400, { error: result.error });
+        return;
+      }
+      const selfSession = onlineSessions.get(claim.uid);
+      const targetSession = onlineSessions.get(result.targetUserId);
+      if (selfSession) sendMsg(selfSession.ws, { type: 'friends_list_dirty' });
+      if (targetSession) sendMsg(targetSession.ws, { type: 'friends_list_dirty' });
+      if (result.autoAccepted) {
+        notifyFriendsPresence(claim.uid);
+        notifyFriendsPresence(result.targetUserId);
+      }
+      sendJson(res, 200, result);
+      return;
+    }
+
+    if (method === 'POST' && url === '/api/friends/respond') {
+      const claim = getBearerUser(req);
+      if (!claim) {
+        sendJson(res, 401, { error: 'Chưa đăng nhập.' });
+        return;
+      }
+      const body = await readJsonBody(req);
+      const result = userStore.respondFriendRequest(claim.uid, Number(body.requestId), !!body.accept);
+      if (!result.ok) {
+        sendJson(res, 400, { error: result.error });
+        return;
+      }
+      const selfSession = onlineSessions.get(claim.uid);
+      const otherSession = onlineSessions.get(result.otherUserId);
+      if (selfSession) sendMsg(selfSession.ws, { type: 'friends_list_dirty' });
+      if (otherSession) sendMsg(otherSession.ws, { type: 'friends_list_dirty' });
+      if (result.accepted) {
+        notifyFriendsPresence(claim.uid);
+        notifyFriendsPresence(result.otherUserId);
+      }
+      sendJson(res, 200, { ok: true, accepted: result.accepted });
+      return;
+    }
+
+    if (method === 'POST' && url === '/api/friends/remove') {
+      const claim = getBearerUser(req);
+      if (!claim) {
+        sendJson(res, 401, { error: 'Chưa đăng nhập.' });
+        return;
+      }
+      const body = await readJsonBody(req);
+      const otherId = Number(body.friendUserId);
+      const removed = userStore.removeFriend(claim.uid, otherId);
+      const selfSession = onlineSessions.get(claim.uid);
+      const otherSession = onlineSessions.get(otherId);
+      if (selfSession?.spectating?.targetUserId === otherId) {
+        stopSpectating(selfSession.ws);
+        sendMsg(selfSession.ws, { type: 'spectate_ended', reason: 'Đã hủy kết bạn.' });
+      }
+      if (otherSession?.spectating?.targetUserId === claim.uid) {
+        stopSpectating(otherSession.ws);
+        sendMsg(otherSession.ws, { type: 'spectate_ended', reason: 'Đã hủy kết bạn.' });
+      }
+      if (selfSession) sendMsg(selfSession.ws, { type: 'friends_list_dirty' });
+      if (otherSession) sendMsg(otherSession.ws, { type: 'friends_list_dirty' });
+      sendJson(res, 200, { ok: removed });
+      return;
+    }
+
     sendJson(res, 200, { ok: true, activeRooms: rooms.size });
   } catch {
     sendJson(res, 400, { error: 'Dữ liệu yêu cầu không hợp lệ.' });
@@ -510,7 +839,245 @@ wss.on('connection', (ws: AliveWebSocket, req) => {
       return;
     }
 
+    if (msg.type === 'auth_ws') {
+      const claim = userStore.verifyToken(String(msg.token || ''));
+      if (!claim) return;
+      const existing = onlineSessions.get(claim.uid);
+      if (existing && existing.ws !== ws) {
+        cleanupSession(existing.ws, false);
+      }
+      wsAuthMap.set(ws, claim.uid);
+      const session: OnlineSession = {
+        userId: claim.uid,
+        username: claim.username,
+        ws,
+        clientStatus: 'lobby',
+        spectating: null,
+        botStreamMeta: null,
+        botSpectators: new Set(),
+      };
+      onlineSessions.set(claim.uid, session);
+      sendMsg(ws, { type: 'auth_ok', userId: claim.uid, username: claim.username });
+      sendFriendsPresenceSnapshot(session);
+      notifyFriendsPresence(claim.uid);
+      return;
+    }
+
+    if (msg.type === 'logout_ws') {
+      cleanupSession(ws, true);
+      return;
+    }
+
+    if (msg.type === 'presence_update') {
+      const session = getSessionByWs(ws);
+      if (!session) return;
+      const prevStatus = session.clientStatus;
+      session.clientStatus = msg.status === 'playing_bot' ? 'playing_bot' : 'lobby';
+      if (prevStatus === 'playing_bot' && session.clientStatus !== 'playing_bot') {
+        endBotSpectators(session, 'Bạn bè đã rời trận đấu Bot.');
+      }
+      notifyFriendsPresence(session.userId);
+      return;
+    }
+
+    if (msg.type === 'invite_friend') {
+      const sender = getSessionByWs(ws);
+      if (!sender) {
+        sendMsg(ws, { type: 'invite_error', message: 'Bạn cần đăng nhập để gửi lời mời.' });
+        return;
+      }
+      if (!userStore.areFriends(sender.userId, msg.friendUserId)) {
+        sendMsg(ws, { type: 'invite_error', message: 'Hai bạn chưa kết bạn.' });
+        return;
+      }
+      const code = String(msg.roomCode || '').trim().toUpperCase();
+      const room = rooms.get(code);
+      const peerEntry = peerRoomMap.get(ws);
+      if (!room || !peerEntry || peerEntry.room !== room || peerEntry.seat !== 'player' || room.phase !== 'room') {
+        sendMsg(ws, { type: 'invite_error', message: 'Phòng hiện không ở trạng thái chờ người chơi.' });
+        return;
+      }
+      if (room.guest) {
+        sendMsg(ws, { type: 'invite_error', message: 'Phòng đã đủ 2 người chơi.' });
+        return;
+      }
+      const target = onlineSessions.get(msg.friendUserId);
+      if (!target || target.ws.readyState !== WebSocket.OPEN) {
+        sendMsg(ws, { type: 'invite_error', message: 'Người chơi này hiện đang ngoại tuyến.' });
+        return;
+      }
+      const targetPresence = computeUserPresence(target.userId, target.username);
+      if (targetPresence.status !== 'lobby') {
+        sendMsg(ws, { type: 'invite_error', message: `${target.username} đang bận (${targetPresence.status}).` });
+        return;
+      }
+      sendMsg(target.ws, {
+        type: 'pvp_invite',
+        invite: {
+          fromUserId: sender.userId,
+          fromUsername: sender.username,
+          roomCode: room.code,
+          hexCount: room.hexCount,
+        },
+      });
+      sendMsg(ws, { type: 'invite_sent', targetUsername: target.username });
+      return;
+    }
+
+    if (msg.type === 'decline_invite') {
+      const sender = getSessionByWs(ws);
+      const inviter = onlineSessions.get(msg.fromUserId);
+      if (sender && inviter && inviter.ws.readyState === WebSocket.OPEN) {
+        sendMsg(inviter.ws, { type: 'invite_declined', byUsername: sender.username });
+      }
+      return;
+    }
+
+    if (msg.type === 'spectate_friend') {
+      const watcher = getSessionByWs(ws);
+      if (!watcher) {
+        sendMsg(ws, { type: 'spectate_error', message: 'Bạn cần đăng nhập để xem trận đấu của bạn bè.' });
+        return;
+      }
+      if (!userStore.areFriends(watcher.userId, msg.friendUserId)) {
+        sendMsg(ws, { type: 'spectate_error', message: 'Chỉ có thể xem trận đấu của bạn bè đã kết bạn.' });
+        return;
+      }
+      const target = onlineSessions.get(msg.friendUserId);
+      if (!target || target.ws.readyState !== WebSocket.OPEN) {
+        sendMsg(ws, { type: 'spectate_error', message: 'Người chơi này hiện đang ngoại tuyến.' });
+        return;
+      }
+
+      const targetPeer = peerRoomMap.get(target.ws);
+      if (
+        targetPeer &&
+        targetPeer.room.state &&
+        targetPeer.room.guest &&
+        (targetPeer.room.phase === 'playing' || targetPeer.room.phase === 'countdown')
+      ) {
+        if (targetPeer.room.host.ws === ws || targetPeer.room.guest.ws === ws) {
+          sendMsg(ws, { type: 'spectate_error', message: 'Bạn đang trực tiếp thi đấu trong trận này.' });
+          return;
+        }
+        cleanupPeer(ws);
+        stopSpectating(ws, true);
+        const room = targetPeer.room;
+        const guest = room.guest;
+        const roomState = room.state;
+        if (!guest || !roomState) return;
+        const targetSeat = targetPeer.seat;
+        const isHostTarget = targetSeat === 'player';
+        room.spectators.set(ws, { seat: targetSeat, targetUserId: target.userId });
+        watcher.spectating = { mode: 'pvp', roomCode: room.code, targetUserId: target.userId };
+        const count = getSpectatorCountForUser(target.userId);
+        sendMsg(ws, {
+          type: 'spectate_start',
+          mode: 'pvp',
+          targetUserId: target.userId,
+          targetName: isHostTarget ? room.host.name : guest.name,
+          oppName: isHostTarget ? guest.name : room.host.name,
+          selfLoadout: isHostTarget ? room.host.loadout : guest.loadout,
+          oppLoadout: isHostTarget ? guest.loadout : room.host.loadout,
+          obstacles: roomState.obstacles,
+          snapshot: buildSeatSnapshot(roomState, targetSeat, room.tick, performance.now(), 0, []),
+          spectatorCount: count,
+        });
+        notifyViewerCount(target.userId);
+        notifyFriendsPresence(target.userId);
+        notifyFriendsPresence(watcher.userId);
+        return;
+      }
+
+      if (target.clientStatus === 'playing_bot') {
+        cleanupPeer(ws);
+        stopSpectating(ws, true);
+        target.botSpectators.add(ws);
+        watcher.spectating = { mode: 'bot', targetUserId: target.userId };
+        const count = target.botSpectators.size;
+        sendMsg(target.ws, { type: 'bot_stream_toggle', active: true, spectatorCount: count });
+        if (target.botStreamMeta) {
+          sendMsg(ws, {
+            type: 'spectate_start',
+            mode: 'bot',
+            targetUserId: target.userId,
+            targetName: target.username,
+            oppName: 'BOT AI',
+            selfLoadout: target.botStreamMeta.selfLoadout,
+            oppLoadout: target.botStreamMeta.oppLoadout,
+            obstacles: target.botStreamMeta.obstacles,
+            snapshot: target.botStreamMeta.lastSnapshot,
+            spectatorCount: count,
+          });
+        }
+        notifyViewerCount(target.userId);
+        notifyFriendsPresence(target.userId);
+        notifyFriendsPresence(watcher.userId);
+        return;
+      }
+
+      sendMsg(ws, { type: 'spectate_error', message: `${target.username} hiện không ở trong trận đấu nào.` });
+      return;
+    }
+
+    if (msg.type === 'stop_spectate') {
+      stopSpectating(ws);
+      return;
+    }
+
+    if (msg.type === 'bot_stream_init') {
+      const session = getSessionByWs(ws);
+      if (!session || session.clientStatus !== 'playing_bot') return;
+      session.botStreamMeta = {
+        selfLoadout: msg.selfLoadout,
+        oppLoadout: msg.oppLoadout,
+        obstacles: msg.obstacles,
+        lastSnapshot: msg.snapshot,
+      };
+      const count = session.botSpectators.size;
+      for (const specWs of session.botSpectators) {
+        sendMsg(specWs, {
+          type: 'spectate_start',
+          mode: 'bot',
+          targetUserId: session.userId,
+          targetName: session.username,
+          oppName: 'BOT AI',
+          selfLoadout: msg.selfLoadout,
+          oppLoadout: msg.oppLoadout,
+          obstacles: msg.obstacles,
+          snapshot: msg.snapshot,
+          spectatorCount: count,
+        });
+      }
+      return;
+    }
+
+    if (msg.type === 'bot_stream_snapshot') {
+      const session = getSessionByWs(ws);
+      if (!session || session.clientStatus !== 'playing_bot') return;
+      if (session.botStreamMeta) {
+        session.botStreamMeta.lastSnapshot = msg.snapshot;
+      }
+      for (const specWs of session.botSpectators) {
+        sendMsg(specWs, { type: 'spectate_snapshot', snapshot: msg.snapshot });
+      }
+      return;
+    }
+
+    if (msg.type === 'bot_stream_end') {
+      const session = getSessionByWs(ws);
+      if (!session) return;
+      endBotSpectators(session, msg.reason || 'Trận đấu Bot đã kết thúc.');
+      return;
+    }
+
     if (msg.type === 'create_room') {
+      stopSpectating(ws, true);
+      const creatorSession = getSessionByWs(ws);
+      if (creatorSession && creatorSession.clientStatus === 'playing_bot') {
+        creatorSession.clientStatus = 'lobby';
+        endBotSpectators(creatorSession, 'Bạn bè đã chuyển sang phòng PvP.');
+      }
       cleanupPeer(ws);
       const code = generateRoomCode();
       const loadout = sanitizeLoadout(msg.loadout);
@@ -536,6 +1103,7 @@ wss.on('connection', (ws: AliveWebSocket, req) => {
         lastCountdownInt: 0,
         host,
         guest: null,
+        spectators: new Map(),
         state: null,
         tick: 0,
         pendingEvents: [],
@@ -545,10 +1113,17 @@ wss.on('connection', (ws: AliveWebSocket, req) => {
       peerRoomMap.set(ws, { room, seat: 'player' });
       sendMsg(ws, { type: 'room_created', code });
       broadcastRoomState(room);
+      notifyUserFriendsPresence(ws);
       return;
     }
 
     if (msg.type === 'join_room') {
+      stopSpectating(ws, true);
+      const joinerSession = getSessionByWs(ws);
+      if (joinerSession && joinerSession.clientStatus === 'playing_bot') {
+        joinerSession.clientStatus = 'lobby';
+        endBotSpectators(joinerSession, 'Bạn bè đã vào phòng PvP.');
+      }
       cleanupPeer(ws);
       const code = String(msg.code || '').trim().toUpperCase();
       const room = rooms.get(code);
@@ -574,6 +1149,7 @@ wss.on('connection', (ws: AliveWebSocket, req) => {
       };
       peerRoomMap.set(ws, { room, seat: 'enemy' });
       broadcastRoomState(room);
+      notifyUserFriendsPresence(ws);
       return;
     }
 
@@ -666,8 +1242,14 @@ wss.on('connection', (ws: AliveWebSocket, req) => {
     }
   });
 
-  ws.on('close', () => cleanupPeer(ws));
-  ws.on('error', () => cleanupPeer(ws));
+  ws.on('close', () => {
+    cleanupPeer(ws);
+    cleanupSession(ws, true);
+  });
+  ws.on('error', () => {
+    cleanupPeer(ws);
+    cleanupSession(ws, true);
+  });
 });
 
 // High-precision Fixed-Timestep 60Hz Accumulator Loop (eliminates Windows setInterval timer wobble!)
@@ -736,14 +1318,34 @@ function tickServerLoop(): void {
 
       // Broadcast lean snapshots at full 60Hz (zero trail bloat + TCP_NODELAY -> ultra-smooth!)
       const batchEvents = room.pendingEvents.splice(0, room.pendingEvents.length);
-      sendMsg(room.host.ws, {
-        type: 'snapshot',
-        snapshot: buildSeatSnapshot(room.state, 'player', room.tick, snapTime, room.host.lastAckSeq, batchEvents),
-      });
-      sendMsg(room.guest.ws, {
-        type: 'snapshot',
-        snapshot: buildSeatSnapshot(room.state, 'enemy', room.tick, snapTime, room.guest.lastAckSeq, batchEvents),
-      });
+      const hostSnap = buildSeatSnapshot(
+        room.state,
+        'player',
+        room.tick,
+        snapTime,
+        room.host.lastAckSeq,
+        batchEvents,
+      );
+      const guestSnap = buildSeatSnapshot(
+        room.state,
+        'enemy',
+        room.tick,
+        snapTime,
+        room.guest.lastAckSeq,
+        batchEvents,
+      );
+      sendMsg(room.host.ws, { type: 'snapshot', snapshot: hostSnap });
+      sendMsg(room.guest.ws, { type: 'snapshot', snapshot: guestSnap });
+
+      // Live 30Hz (or instant event) fan-out to PvP spectators watching from friend's perspective
+      if (room.spectators.size > 0 && (room.tick % 2 === 0 || batchEvents.length > 0)) {
+        for (const [specWs, specInfo] of room.spectators.entries()) {
+          sendMsg(specWs, {
+            type: 'spectate_snapshot',
+            snapshot: specInfo.seat === 'player' ? hostSnap : guestSnap,
+          });
+        }
+      }
     }
   }
 
@@ -757,6 +1359,7 @@ setInterval(() => {
   for (const client of wss.clients as Set<AliveWebSocket>) {
     if (client.isAlive === false) {
       cleanupPeer(client);
+      cleanupSession(client, true);
       client.terminate();
       continue;
     }
@@ -765,6 +1368,7 @@ setInterval(() => {
       client.ping();
     } catch {
       cleanupPeer(client);
+      cleanupSession(client, true);
       client.terminate();
     }
   }

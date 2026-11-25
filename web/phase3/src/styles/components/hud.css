@@ -211,3 +211,120 @@
 .icon-btn.accent-purple { border-color: rgba(192, 132, 252, 0.48); color: #e9d5ff; background: rgba(107, 33, 168, 0.22); }
 .icon-btn.active { border-color: var(--emerald); color: #d1fae5; background: rgba(16, 185, 129, 0.24); }
 
+/* Live Spectate & Viewer Badges */
+.spectate-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(225, 29, 72, 0.24);
+  border: 1px solid rgba(251, 113, 133, 0.65);
+  color: #ffe4e6;
+  padding: 3px 10px;
+  border-radius: 99px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.spectate-pill::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #fb7185;
+  box-shadow: 0 0 8px #fb7185;
+  animation: livePulse 1.2s ease-in-out infinite;
+}
+@keyframes livePulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.8); }
+}
+
+.viewer-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(14, 116, 144, 0.24);
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  color: #bae6fd;
+  padding: 3px 10px;
+  border-radius: 99px;
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.hud-top.spectating #pcQuickPanels,
+.hud-top.spectating #btnLoadout,
+.hud-top.spectating #btnCustomize,
+.hud-top.spectating #btnModeToggle,
+.hud-top.spectating #btnHelp,
+.hud-top.spectating #btnBotToggle,
+.hud-top.spectating #btnRestart,
+.hud-top.spectating #btnMatchSettings {
+  display: none !important;
+}
+.icon-btn.bot-paused {
+  border-color: rgba(251, 191, 36, 0.65);
+  color: #fef3c7;
+  background: rgba(245, 158, 11, 0.24);
+}
+.hud-top.spectating #btnLobby {
+  border-color: rgba(251, 113, 133, 0.60);
+  background: rgba(225, 29, 72, 0.25);
+  color: #ffe4e6;
+  font-weight: 800;
+}
+.hud-top.spectating #btnLobby:hover {
+  background: rgba(225, 29, 72, 0.45);
+  color: #fff;
+}
+
+/* Floating Incoming PvP Invite Toast */
+.invite-toast-root {
+  position: fixed;
+  top: calc(14px + var(--safe-top));
+  right: calc(14px + var(--safe-right));
+  z-index: 75;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+  max-width: min(330px, calc(100vw - 28px));
+}
+.invite-card {
+  pointer-events: auto;
+  background: rgba(15, 23, 38, 0.96);
+  border: 1px solid rgba(56, 189, 248, 0.58);
+  border-radius: 13px;
+  padding: 12px 14px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(12px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  animation: inviteSlideIn 180ms ease-out;
+}
+@keyframes inviteSlideIn {
+  from { opacity: 0; transform: translateY(-8px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.invite-card-kicker {
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--cyan);
+}
+.invite-card-text {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #f1f5f9;
+  line-height: 1.4;
+}
+.invite-card-text strong { color: #7dd3fc; font-weight: 800; }
+.invite-card-actions {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+

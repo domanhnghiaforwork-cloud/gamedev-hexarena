@@ -1,13 +1,19 @@
 import { updateBotAI } from '@ai/botController';
-import type { PlayerCosmetics } from '@config/cosmetics';
+import { sanitizeCosmetics, type PlayerCosmetics } from '@config/cosmetics';
 import { applyTypographyToDocument, ensureFontsLoaded } from '@config/typography';
 import { FIXED_DT, createDefaultLoadout } from '@core/constants';
 import { createMatchState, stepSimulation } from '@core/physics/simulation';
 import type { MatchState, PlayerLoadout, SimEvent, SlotKey } from '@core/types';
 import { soundFX, triggerHaptic } from '@audio/index';
 import { InputManager } from '@input/inputManager';
-import { AuthClient } from '@net/authClient';
-import type { RoomStatePayload } from '@net/protocol';
+import { AuthClient, type FriendsApiPayload } from '@net/authClient';
+import {
+  buildSeatSnapshot,
+  type FriendPresenceItem,
+  type FriendStatus,
+  type PvPInvitePayload,
+  type RoomStatePayload,
+} from '@net/protocol';
 import { PvPClient } from '@net/pvpClient';
 import { PvPInterpolator } from '@net/pvpInterpolator';
 import { GameRenderer } from '@render/renderer';
@@ -17,6 +23,8 @@ import {
   loadPCControlConfig,
   loadPlayerCosmetics,
   loadPlayerLoadout,
+  sanitizeMobileHUDConfig,
+  sanitizePCControlConfig,
   saveAudioSettings,
   saveMobileHUDConfig,
   savePCControlConfig,
@@ -36,7 +44,7 @@ import {
 } from '@ui/common/fullscreen';
 import { HUDCustomizerController } from '@ui/hud/hudCustomizer';
 import { LoadoutEditorModal } from '@ui/screens/loadoutEditor';
-import { LobbyScreen, type LobbyPvPState } from '@ui/screens/lobby';
+import { LobbyScreen, type LobbyPvPState, type LobbySocialState } from '@ui/screens/lobby';
 import { PvPRoomModal } from '@ui/modals/pvpRoomModal';
 import { renderHelpModal, TopBarController } from '@ui/hud/topBar';
 
@@ -45,6 +53,7 @@ applyTypographyToDocument();
 const canvas = document.getElementById('gameCanvas') as HTMLCanvasElement;
 const lobbyRoot = document.getElementById('lobbyRoot') as HTMLElement;
 const modalRoot = document.getElementById('modalRoot') as HTMLElement;
+const inviteToastRoot = document.getElementById('inviteToastRoot') as HTMLElement;
 
 // Persistent User Configurations & Auth Client (SQLite-backed)
 const authClient = new AuthClient();
@@ -66,13 +75,38 @@ const urlRoom = new URLSearchParams(window.location.search).get('room')?.trim().
 
 // Screen & Match Mode State
 let inLobby = true;
-let matchMode: 'bot' | 'pvp' = 'bot';
+let matchMode: 'bot' | 'pvp' | 'spectate' = 'bot';
 let pvpCountdownActive = false;
 let activeRoomState: RoomStatePayload | null = null;
 const pvpInterpolator = new PvPInterpolator();
 let pvpTickAccum = 0;
 let pvpIdleSendTimer = 0;
 let lastSentSig = '';
+
+// Social, Invite & Live Spectate State
+const FRIEND_STATUS_ORDER: Record<FriendStatus, number> = {
+  playing_pvp: 0,
+  playing_bot: 1,
+  in_room: 2,
+  lobby: 3,
+  spectating: 4,
+  offline: 5,
+};
+let friendsData: FriendsApiPayload | null = null;
+const presenceMap = new Map<number, FriendPresenceItem>();
+let socialLoading = false;
+let socialFeedback: { text: string; isError: boolean } | null = null;
+let socialFeedbackTimer: number | null = null;
+let pendingInviteFriendId: number | null = null;
+let activeSpectate: { mode: 'pvp' | 'bot'; targetUserId: number; targetName: string; oppName: string } | null = null;
+let botStreamActive = false;
+let botStreamTick = 0;
+let botStreamTimer = 0;
+let botStreamPendingEvents: SimEvent[] = [];
+let botSelfLoadout: PlayerLoadout = playerLoadout;
+let botOppLoadout: PlayerLoadout = createDefaultLoadout();
+let botAiPaused = false;
+let activeInviteToastTimer: number | null = null;
 
 const lobbyPvP: LobbyPvPState = {
   tab: urlRoom ? 'pvp' : 'bot',
@@ -114,9 +148,11 @@ function openPvPRoomView(room: RoomStatePayload): void {
     activePvPRoomModal = new PvPRoomModal({
       mount: modalRoot,
       room,
+      invitableFriends: getInvitableFriends(),
       onSetHexCount: (count) => pvpClient.setRoomHexCount(count),
       onToggleReady: (ready) => pvpClient.setRoomReady(ready),
       onStartPrep: () => pvpClient.startPrep(),
+      onInviteFriend: (friendUserId) => handleInviteFriend(friendUserId),
       onLeaveRoom: () => {
         pvpClient.leaveRoom();
         activeRoomState = null;
@@ -175,11 +211,170 @@ function openPvPRoomView(room: RoomStatePayload): void {
   }
 }
 
+function buildLobbySocialState(): LobbySocialState {
+  const friendsList: FriendPresenceItem[] = (friendsData?.friends ?? []).map((f) => {
+    const p = presenceMap.get(f.userId);
+    return (
+      p ?? {
+        userId: f.userId,
+        username: f.username,
+        status: 'offline',
+        roomCode: null,
+        canSpectate: false,
+        spectatorCount: 0,
+      }
+    );
+  });
+
+  friendsList.sort((a, b) => {
+    const diff = FRIEND_STATUS_ORDER[a.status] - FRIEND_STATUS_ORDER[b.status];
+    if (diff !== 0) return diff;
+    return a.username.localeCompare(b.username, 'vi');
+  });
+
+  return {
+    friends: friendsList,
+    incoming: friendsData?.incoming ?? [],
+    outgoing: friendsData?.outgoing ?? [],
+    loading: socialLoading,
+    feedbackMsg: socialFeedback,
+  };
+}
+
+function getInvitableFriends(): FriendPresenceItem[] {
+  return buildLobbySocialState().friends.filter((f) => f.status === 'lobby');
+}
+
+function syncSocialUI(): void {
+  if (inLobby && !hasModalOpen()) {
+    lobby.updateSocial(buildLobbySocialState(), authClient.user);
+  }
+  if (activePvPRoomModal && activeRoomState) {
+    activePvPRoomModal.updateInvitableFriends(getInvitableFriends());
+  }
+}
+
+function setSocialFeedback(text: string, isError: boolean): void {
+  socialFeedback = { text, isError };
+  if (socialFeedbackTimer !== null) window.clearTimeout(socialFeedbackTimer);
+  socialFeedbackTimer = window.setTimeout(() => {
+    socialFeedback = null;
+    syncSocialUI();
+  }, 4000);
+  syncSocialUI();
+}
+
+async function refreshFriendsFromServer(): Promise<void> {
+  if (!authClient.user) {
+    friendsData = null;
+    presenceMap.clear();
+    syncSocialUI();
+    return;
+  }
+  socialLoading = true;
+  syncSocialUI();
+  const payload = await authClient.getFriends();
+  socialLoading = false;
+  if (payload) {
+    friendsData = payload;
+    for (const item of payload.presence) {
+      presenceMap.set(item.userId, item);
+    }
+  }
+  syncSocialUI();
+}
+
+function dismissIncomingInvite(): void {
+  if (activeInviteToastTimer !== null) {
+    window.clearTimeout(activeInviteToastTimer);
+    activeInviteToastTimer = null;
+  }
+  inviteToastRoot.innerHTML = '';
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function showIncomingInvite(invite: PvPInvitePayload): void {
+  dismissIncomingInvite();
+  inviteToastRoot.innerHTML = `
+    <div class="invite-card">
+      <div class="invite-card-kicker">Lời mời đấu PvP 1v1</div>
+      <div class="invite-card-text">
+        <strong>${escapeHtml(invite.fromUsername)}</strong> mời bạn vào phòng
+        <strong>${escapeHtml(invite.roomCode)}</strong> (${invite.hexCount} mảnh).
+      </div>
+      <div class="invite-card-actions">
+        <button id="inviteAcceptBtn" class="btn sm primary" type="button">Vào phòng</button>
+        <button id="inviteDeclineBtn" class="btn sm ghost" type="button">Từ chối</button>
+      </div>
+    </div>
+  `;
+
+  inviteToastRoot.querySelector('#inviteAcceptBtn')?.addEventListener('click', () => {
+    dismissIncomingInvite();
+    if (matchMode === 'spectate') {
+      pvpClient.stopSpectate();
+      activeSpectate = null;
+      topBar.setSpectateMode(false);
+    }
+    if (botStreamActive) {
+      pvpClient.sendBotStreamEnd('Đã chuyển sang phòng PvP.');
+      botStreamActive = false;
+      topBar.setViewerCount(0);
+    }
+    clearModalRefs();
+    lobbyPvP.tab = 'pvp';
+    lobbyPvP.joinCodeDraft = invite.roomCode;
+    lobbyPvP.busy = true;
+    lobbyPvP.errorMessage = null;
+    void pvpClient.joinRoom(invite.roomCode, playerLoadout, authClient.user?.username);
+  });
+
+  inviteToastRoot.querySelector('#inviteDeclineBtn')?.addEventListener('click', () => {
+    dismissIncomingInvite();
+    pvpClient.declineInvite(invite.fromUserId, invite.roomCode);
+  });
+
+  activeInviteToastTimer = window.setTimeout(() => {
+    dismissIncomingInvite();
+  }, 25_000);
+}
+
+function handleInviteFriend(friendUserId: number): void {
+  if (!authClient.user) {
+    topBar.showToast('Bạn cần đăng nhập để gửi lời mời.');
+    return;
+  }
+  const activeCode = activeRoomState?.seat === 'player' && activeRoomState.phase === 'room'
+    ? activeRoomState.code
+    : lobbyPvP.waitingCode;
+  if (activeCode) {
+    void pvpClient.inviteFriend(friendUserId, activeCode);
+    return;
+  }
+  pendingInviteFriendId = friendUserId;
+  lobbyPvP.tab = 'pvp';
+  lobbyPvP.busy = true;
+  lobbyPvP.errorMessage = null;
+  refreshLobbyIfVisible();
+  void pvpClient.createRoom(playerLoadout, authClient.user.username);
+}
+
 const pvpClient = new PvPClient({
+  onRoomCreated: (code) => {
+    if (pendingInviteFriendId !== null) {
+      const targetId = pendingInviteFriendId;
+      pendingInviteFriendId = null;
+      void pvpClient.inviteFriend(targetId, code);
+    }
+  },
   onRoomState: (room) => {
     openPvPRoomView(room);
   },
   onRoomError: (message) => {
+    pendingInviteFriendId = null;
     lobbyPvP.busy = false;
     lobbyPvP.errorMessage = message;
     refreshLobbyIfVisible();
@@ -190,6 +385,8 @@ const pvpClient = new PvPClient({
     lobbyPvP.waitingCode = null;
     lobbyPvP.errorMessage = null;
     activeRoomState = null;
+    activeSpectate = null;
+    botStreamActive = false;
     matchMode = 'pvp';
     pvpCountdownActive = msg.countdownSec > 0;
     pvpTickAccum = 0;
@@ -213,6 +410,8 @@ const pvpClient = new PvPClient({
     soundFX.setBgmMode('match');
     soundFX.setMatchTension(0);
     topBar.hideMatchOver();
+    topBar.setSpectateMode(false);
+    topBar.setViewerCount(0);
     topBar.setPlayerName(authClient.user?.username ?? selfName);
     topBar.setMatchModeLabel(true, msg.code, oppName);
     topBar.setRematchStatus(0);
@@ -256,14 +455,112 @@ const pvpClient = new PvPClient({
     topBar.showToast(message);
     enterLobby();
   },
+  onFriendsPresenceSnapshot: (items) => {
+    presenceMap.clear();
+    for (const item of items) {
+      presenceMap.set(item.userId, item);
+    }
+    syncSocialUI();
+  },
+  onFriendPresenceUpdate: (item) => {
+    presenceMap.set(item.userId, item);
+    syncSocialUI();
+  },
+  onFriendsListDirty: () => {
+    void refreshFriendsFromServer();
+  },
+  onPvPInvite: (invite) => {
+    showIncomingInvite(invite);
+  },
+  onInviteSent: (targetUsername) => {
+    topBar.showToast(`Đã gửi lời mời đấu PvP tới ${targetUsername}.`);
+  },
+  onInviteDeclined: (byUsername) => {
+    topBar.showToast(`${byUsername} đã từ chối lời mời đấu.`);
+  },
+  onInviteError: (message) => {
+    topBar.showToast(message);
+  },
+  onSpectateStart: (msg) => {
+    clearModalRefs();
+    inLobby = false;
+    lobby.hide();
+    pvpCountdownActive = false;
+    activeRoomState = null;
+    botStreamActive = false;
+    matchMode = 'spectate';
+    activeSpectate = {
+      mode: msg.mode,
+      targetUserId: msg.targetUserId,
+      targetName: msg.targetName,
+      oppName: msg.oppName,
+    };
+
+    state = createMatchState(msg.selfLoadout, msg.oppLoadout, Math.random, false);
+    state.obstacles = msg.obstacles;
+    const now = performance.now();
+    pvpInterpolator.reset();
+    pvpInterpolator.pushSnapshot(msg.snapshot, now, state.obstacles, true, msg.mode === 'bot' ? 50 : 33.3);
+    pvpInterpolator.applyFrame(state, now, FIXED_DT, true);
+
+    renderer.vfx.clear();
+    soundFX.setBgmMode('match');
+    soundFX.setMatchTension(0);
+    topBar.hideCountdown();
+    topBar.hideMatchOver();
+    topBar.setSpectateMode(true, msg.targetName, msg.oppName, msg.mode);
+    topBar.setVisible(true);
+    topBar.syncPortraitHint(false, input.live.mode);
+    input.setPaused(true);
+    input.clearAllInputs();
+    input.recomputeLayouts();
+    topBar.showToast(`Đang xem trực tiếp trận đấu của ${msg.targetName}`);
+  },
+  onSpectateSnapshot: (msg) => {
+    if (matchMode !== 'spectate' || inLobby) return;
+    const interval = activeSpectate?.mode === 'bot' ? 50 : 33.3;
+    pvpInterpolator.pushSnapshot(msg.snapshot, performance.now(), state.obstacles, true, interval);
+    if (msg.snapshot.events.length > 0) {
+      handleSimEvents(msg.snapshot.events, true);
+    }
+  },
+  onSpectateEnded: (reason) => {
+    if (matchMode === 'spectate') {
+      topBar.showToast(reason);
+      enterLobby();
+    }
+  },
+  onSpectateError: (message) => {
+    topBar.showToast(message);
+  },
+  onViewerCountUpdate: (count) => {
+    topBar.setViewerCount(count);
+  },
+  onBotStreamToggle: (active, spectatorCount) => {
+    botStreamActive = active;
+    topBar.setViewerCount(spectatorCount);
+    if (active && matchMode === 'bot' && !inLobby) {
+      botStreamTimer = 0;
+      botStreamPendingEvents = [];
+      const snap = buildSeatSnapshot(state, 'player', ++botStreamTick, performance.now(), 0, []);
+      pvpClient.sendBotStreamInit(botSelfLoadout, botOppLoadout, state.obstacles, snap);
+      if (spectatorCount > 0) {
+        topBar.showToast(`Có ${spectatorCount} bạn bè đang xem trực tiếp trận đấu của bạn!`);
+      }
+    }
+  },
   onDisconnected: () => {
+    pendingInviteFriendId = null;
     lobbyPvP.busy = false;
     lobbyPvP.waitingCode = null;
-    const wasInPvP = matchMode === 'pvp' || activeRoomState !== null;
+    botStreamActive = false;
+    topBar.setViewerCount(0);
+    const wasInPvPOrSpectate = matchMode === 'pvp' || matchMode === 'spectate' || activeRoomState !== null;
     activeRoomState = null;
+    activeSpectate = null;
     pvpCountdownActive = false;
     topBar.hideCountdown();
-    if (wasInPvP) {
+    if (wasInPvPOrSpectate) {
       topBar.showToast('Mất kết nối máy chủ PvP.');
       enterLobby();
     } else {
@@ -322,6 +619,16 @@ const topBar = new TopBarController({
     saveAudioSettings(audioSettings);
     return audioSettings.enabled;
   },
+  onToggleBot: () => {
+    botAiPaused = !botAiPaused;
+    if (botAiPaused && matchMode === 'bot') {
+      state.enemy.vx = 0;
+      state.enemy.vy = 0;
+      state.enemy.isAiming = false;
+    }
+    topBar.showToast(botAiPaused ? 'Đã tắt Bot (đứng yên để test kỹ năng)' : 'Đã bật lại Bot AI');
+    return botAiPaused;
+  },
   onOpenHelp: () => openHelpModal(),
   onShowIOSGuide: () => showIOSFullscreenGuide(),
   onRestart: () => {
@@ -378,6 +685,43 @@ const lobby = new LobbyScreen({
   onJoinCodeInput: (code) => {
     lobbyPvP.joinCodeDraft = code;
   },
+  onSendFriendRequest: async (username) => {
+    const res = await authClient.sendFriendRequest(username);
+    if (!res.ok) {
+      setSocialFeedback(res.error, true);
+      return;
+    }
+    setSocialFeedback(
+      res.autoAccepted
+        ? `Đã trở thành bạn bè với ${res.targetUsername ?? username}!`
+        : `Đã gửi lời mời kết bạn tới ${res.targetUsername ?? username}.`,
+      false,
+    );
+    await refreshFriendsFromServer();
+  },
+  onRespondFriendRequest: async (requestId, accept) => {
+    const res = await authClient.respondFriendRequest(requestId, accept);
+    if (!res.ok) {
+      setSocialFeedback(res.error ?? 'Lỗi xử lý lời mời.', true);
+      return;
+    }
+    setSocialFeedback(accept ? 'Đã chấp nhận kết bạn!' : 'Đã từ chối lời mời.', false);
+    await refreshFriendsFromServer();
+  },
+  onRemoveFriend: async (friendUserId) => {
+    const ok = await authClient.removeFriend(friendUserId);
+    if (ok) {
+      presenceMap.delete(friendUserId);
+      setSocialFeedback('Đã cập nhật danh sách bạn bè.', false);
+      await refreshFriendsFromServer();
+    }
+  },
+  onSpectateFriend: (friendUserId) => {
+    void pvpClient.spectateFriend(friendUserId);
+  },
+  onInviteFriend: (friendUserId) => {
+    handleInviteFriend(friendUserId);
+  },
 });
 
 const input = new InputManager({
@@ -409,7 +753,7 @@ function hasModalOpen(): boolean {
 
 function refreshLobbyIfVisible(): void {
   if (inLobby && !hasModalOpen()) {
-    lobby.show(playerLoadout, input.live.mode, lobbyPvP, authClient.user);
+    lobby.show(playerLoadout, input.live.mode, lobbyPvP, authClient.user, buildLobbySocialState());
   }
 }
 
@@ -457,6 +801,14 @@ function closeAllModals(): void {
 }
 
 function enterLobby(): void {
+  if (matchMode === 'spectate') {
+    pvpClient.stopSpectate();
+    activeSpectate = null;
+  }
+  if (botStreamActive) {
+    pvpClient.sendBotStreamEnd('Người chơi đã về sảnh.');
+    botStreamActive = false;
+  }
   if (matchMode === 'pvp' || lobbyPvP.waitingCode || activeRoomState !== null) {
     pvpClient.leaveRoom();
     lobbyPvP.waitingCode = null;
@@ -468,17 +820,24 @@ function enterLobby(): void {
   pvpInterpolator.reset();
   clearModalRefs();
   inLobby = true;
+  pvpClient.setPresence('lobby');
   soundFX.setBgmMode('lobby');
   soundFX.setMatchTension(0);
+  topBar.setSpectateMode(false);
+  topBar.setViewerCount(0);
   topBar.setVisible(false);
   topBar.hideCountdown();
   topBar.hideMatchOver();
   input.setPaused(true);
   topBar.syncPortraitHint(true, input.live.mode);
-  lobby.show(playerLoadout, input.live.mode, lobbyPvP, authClient.user);
+  lobby.show(playerLoadout, input.live.mode, lobbyPvP, authClient.user, buildLobbySocialState());
 }
 
 function startNewBotMatch(): void {
+  if (matchMode === 'spectate') {
+    pvpClient.stopSpectate();
+    activeSpectate = null;
+  }
   if (lobbyPvP.waitingCode) {
     pvpClient.leaveRoom();
     lobbyPvP.waitingCode = null;
@@ -488,18 +847,31 @@ function startNewBotMatch(): void {
   clearModalRefs();
   inLobby = false;
   lobby.hide();
-  state = createMatchState(playerLoadout, createDefaultLoadout(), Math.random, true);
+  botSelfLoadout = playerLoadout;
+  botOppLoadout = createDefaultLoadout();
+  state = createMatchState(botSelfLoadout, botOppLoadout, Math.random, true);
+  botStreamTick = 0;
+  botStreamTimer = 0;
+  botStreamPendingEvents = [];
+  pvpClient.setPresence('playing_bot');
   renderer.vfx.clear();
   soundFX.setBgmMode('match');
   soundFX.setMatchTension(0);
   topBar.hideMatchOver();
+  topBar.setSpectateMode(false);
   topBar.setPlayerName(authClient.user?.username ?? null);
   topBar.setMatchModeLabel(false);
+  topBar.setBotPaused(botAiPaused);
   topBar.setVisible(true);
   topBar.syncPortraitHint(false, input.live.mode);
   input.setPaused(false);
   input.clearAllInputs();
   input.recomputeLayouts();
+
+  if (botStreamActive) {
+    const snap = buildSeatSnapshot(state, 'player', ++botStreamTick, performance.now(), 0, []);
+    pvpClient.sendBotStreamInit(botSelfLoadout, botOppLoadout, state.obstacles, snap);
+  }
 }
 
 function applyAccountProfile(user: {
@@ -512,15 +884,15 @@ function applyAccountProfile(user: {
   playerLoadout = user.loadout;
   savePlayerLoadout(playerLoadout);
   if (user.mobileHud) {
-    mobileHUDConfig = user.mobileHud;
+    mobileHUDConfig = sanitizeMobileHUDConfig(user.mobileHud);
     saveMobileHUDConfig(mobileHUDConfig);
   }
   if (user.pcControls) {
-    pcControlConfig = user.pcControls;
+    pcControlConfig = sanitizePCControlConfig(user.pcControls);
     savePCControlConfig(pcControlConfig);
   }
   if (user.cosmetics) {
-    playerCosmetics = user.cosmetics;
+    playerCosmetics = sanitizeCosmetics(user.cosmetics);
     savePlayerCosmetics(playerCosmetics);
   }
   topBar.setPlayerName(user.username);
@@ -540,6 +912,10 @@ function openAuthModal(initialTab: 'login' | 'register' = 'login'): void {
       const res = await authClient.login(username, password);
       if (!res.ok) return res.error;
       applyAccountProfile(res.user);
+      if (authClient.token) {
+        void pvpClient.connectWithToken(authClient.token);
+      }
+      void refreshFriendsFromServer();
       closeAllModals();
       topBar.showToast(`Xin chào, ${res.user.username}! Đã tải vũ khí & cài đặt phím của bạn.`);
       return null;
@@ -555,6 +931,10 @@ function openAuthModal(initialTab: 'login' | 'register' = 'login'): void {
       );
       if (!res.ok) return res.error;
       applyAccountProfile(res.user);
+      if (authClient.token) {
+        void pvpClient.connectWithToken(authClient.token);
+      }
+      void refreshFriendsFromServer();
       closeAllModals();
       topBar.showToast(`Đăng ký thành công! Đã lưu vũ khí & cài đặt phím vào ${res.user.username}.`);
       return null;
@@ -597,6 +977,12 @@ function openSettingsModal(): void {
       onOpenAuth: () => openAuthModal('login'),
       onLogout: () => {
         authClient.logout();
+        pvpClient.clearAuth();
+        friendsData = null;
+        presenceMap.clear();
+        botStreamActive = false;
+        dismissIncomingInvite();
+        topBar.setViewerCount(0);
         topBar.setPlayerName(null);
         topBar.showToast('Đã đăng xuất tài khoản.');
         closeAllModals();
@@ -717,20 +1103,31 @@ function openHelpModal(): void {
   renderHelpModal(modalRoot, pcControlConfig, () => closeAllModals());
 }
 
-function handleSimEvents(events: SimEvent[]): void {
+function handleSimEvents(events: SimEvent[], isSpectator = false): void {
   if (events.length === 0) return;
   renderer.vfx.ingestEvents(events, playerCosmetics);
   for (const ev of events) {
     if (ev.type === 'sfx') soundFX.play(ev.kind);
-    else if (ev.type === 'haptic') triggerHaptic(ev.pattern);
+    else if (ev.type === 'haptic' && !isSpectator) triggerHaptic(ev.pattern);
     else if (ev.type === 'toast') topBar.showToast(ev.message);
-    else if (ev.type === 'matchEnd') topBar.showMatchOver(state, ev.playerWon);
+    else if (ev.type === 'matchEnd') {
+      topBar.showMatchOver(
+        state,
+        ev.playerWon,
+        isSpectator && activeSpectate
+          ? { targetName: activeSpectate.targetName, oppName: activeSpectate.oppName }
+          : undefined,
+      );
+    }
   }
 }
 
 function processLocalSimEvents(): void {
   if (state.events.length === 0) return;
   const events = state.events.splice(0, state.events.length);
+  if (matchMode === 'bot' && botStreamActive) {
+    botStreamPendingEvents.push(...events);
+  }
   handleSimEvents(events);
 }
 
@@ -770,6 +1167,10 @@ enterLobby();
 void authClient.restoreSession().then((user) => {
   if (user) {
     applyAccountProfile(user);
+    if (authClient.token) {
+      void pvpClient.connectWithToken(authClient.token);
+    }
+    void refreshFriendsFromServer();
     refreshLobbyIfVisible();
   }
 });
@@ -805,13 +1206,34 @@ function gameLoop(now: number): void {
     processLocalSimEvents();
     renderer.vfx.update(frameDt);
     renderer.updateCamera(state, frameDt);
+  } else if (matchMode === 'spectate' && !inLobby) {
+    pvpInterpolator.applyFrame(state, now, frameDt, true);
+    renderer.vfx.update(frameDt);
+    renderer.updateCamera(state, frameDt);
   } else if (!isSimulationPaused()) {
+    const prevMatchOver = state.matchOver;
     accumulator += frameDt;
     while (accumulator >= FIXED_DT) {
       const guidedInput = input.applyTickInputs(FIXED_DT);
-      stepSimulation(state, FIXED_DT, guidedInput, updateBotAI);
+      if (botAiPaused) {
+        state.enemy.vx = 0;
+        state.enemy.vy = 0;
+        state.enemy.isAiming = false;
+      }
+      stepSimulation(state, FIXED_DT, guidedInput, botAiPaused ? undefined : updateBotAI);
       processLocalSimEvents();
       accumulator -= FIXED_DT;
+    }
+    if (botStreamActive && matchMode === 'bot') {
+      botStreamTimer += frameDt;
+      const justEnded = !prevMatchOver && state.matchOver;
+      if (botStreamTimer >= 0.05 || justEnded) {
+        botStreamTimer = 0;
+        const flushed = botStreamPendingEvents.splice(0, botStreamPendingEvents.length);
+        pvpClient.sendBotStreamSnapshot(
+          buildSeatSnapshot(state, 'player', ++botStreamTick, performance.now(), 0, flushed),
+        );
+      }
     }
     renderer.vfx.update(frameDt);
     renderer.updateCamera(state, frameDt);
@@ -843,7 +1265,7 @@ function gameLoop(now: number): void {
     activePC,
     now / 1000,
     mobileEditOpts,
-    inLobby && !mobileEditOpts,
+    (inLobby && !mobileEditOpts) || matchMode === 'spectate',
     playerCosmetics,
   );
   requestAnimationFrame(gameLoop);

@@ -35,6 +35,7 @@ export interface MobileComputedLayout {
   form: CircleWidget;
   formRotRad: number;
   special: CircleWidget;
+  specialRotRad: number;
   cancel: CircleWidget;
   arc: {
     cx: number;
@@ -62,6 +63,7 @@ export function isWidgetRotatable(wid: MobileWidgetId): boolean {
   return (
     wid === 'atk' ||
     wid === 'form' ||
+    wid === 'special' ||
     wid === 'recall' ||
     wid === 'fireTabs' ||
     wid === 'rotCluster' ||
@@ -70,8 +72,75 @@ export function isWidgetRotatable(wid: MobileWidgetId): boolean {
 }
 
 export function getWidgetRotateStep(wid: MobileWidgetId): number {
-  if (wid === 'atk' || wid === 'form') return 45;
+  if (wid === 'atk' || wid === 'form' || wid === 'special') return 45;
   return 90;
+}
+
+export function getMobileSpecialRadialPos(
+  special: CircleWidget,
+  baseScale: number,
+  rotRad: number,
+  idx: number,
+  total: number,
+): { x: number; y: number; r: number } {
+  const safeTotal = Math.max(1, total);
+  const step = safeTotal <= 3 ? 0.50 : Math.min(0.46, 1.55 / Math.max(1, safeTotal - 1));
+  const centerAng = -Math.PI * 0.56 + rotRad;
+  const ang = centerAng + (idx - (safeTotal - 1) * 0.5) * step;
+  const distR = special.r + 52 * baseScale;
+  return {
+    x: special.cx + Math.cos(ang) * distR,
+    y: special.cy + Math.sin(ang) * distR,
+    r: 22 * baseScale,
+  };
+}
+
+export function getPCSpecialRadialPos(
+  originX: number,
+  originY: number,
+  idx: number,
+  total: number,
+): { x: number; y: number; r: number } {
+  const safeTotal = Math.max(1, total);
+  let ang: number;
+  if (safeTotal === 1) {
+    ang = -Math.PI * 0.5;
+  } else if (safeTotal === 2) {
+    ang = idx === 0 ? -Math.PI * 0.72 : -Math.PI * 0.28;
+  } else {
+    ang = -Math.PI * 0.5 + (idx / safeTotal) * Math.PI * 2;
+  }
+  const distR = safeTotal <= 2 ? 76 : 82;
+  return {
+    x: originX + Math.cos(ang) * distR,
+    y: originY + Math.sin(ang) * distR,
+    r: 26,
+  };
+}
+
+export function getPCSpecialOptionRects(
+  specialBtn: Rect,
+  scale: number,
+  count: number,
+): Array<Rect & { index: number }> {
+  const safeCount = Math.max(1, count);
+  const pillW = 24 * scale;
+  const pillH = 20 * scale;
+  const gap = 4 * scale;
+  const totalW = safeCount * pillW + Math.max(0, safeCount - 1) * gap;
+  const startX = specialBtn.x + (specialBtn.w - totalW) * 0.5;
+  const y = specialBtn.y - pillH - 6 * scale;
+  const out: Array<Rect & { index: number }> = [];
+  for (let i = 0; i < safeCount; i++) {
+    out.push({
+      index: i,
+      x: startX + i * (pillW + gap),
+      y,
+      w: pillW,
+      h: pillH,
+    });
+  }
+  return out;
 }
 
 export function getRotateHandlePos(
@@ -204,6 +273,7 @@ export function computeSmartMobileLayout(
   const specR = 28 * s * config.widgets.special.scale;
   const specP = posOf('special', specR + 4, specR + 4);
   const special: CircleWidget = { cx: specP.cx, cy: specP.cy, r: specR, opacity: specP.opacity };
+  const specialRotRad = (rotDegOf('special') * Math.PI) / 180;
 
   // Cancel X Zone
   const cancelR = 25 * s * config.widgets.cancel.scale;
@@ -366,6 +436,7 @@ export function computeSmartMobileLayout(
     form,
     formRotRad,
     special,
+    specialRotRad,
     cancel,
     arc,
     btnRecall,

@@ -1,6 +1,7 @@
 import type { PlayerCosmetics } from '@config/cosmetics';
 import type { PlayerLoadout } from '@core/types';
 import type { MobileHUDConfig, PCControlConfig } from '@storage/profiles';
+import type { FriendPresenceItem } from './protocol';
 
 export interface AuthUser {
   id: number;
@@ -9,6 +10,26 @@ export interface AuthUser {
   mobileHud: MobileHUDConfig | null;
   pcControls: PCControlConfig | null;
   cosmetics: PlayerCosmetics | null;
+}
+
+export interface FriendRecord {
+  userId: number;
+  username: string;
+  since: string;
+}
+
+export interface FriendRequestRecord {
+  requestId: number;
+  userId: number;
+  username: string;
+  createdAt: string;
+}
+
+export interface FriendsApiPayload {
+  friends: FriendRecord[];
+  incoming: FriendRequestRecord[];
+  outgoing: FriendRequestRecord[];
+  presence: FriendPresenceItem[];
 }
 
 const KEY_AUTH_TOKEN = 'hex_arena_p3_auth_token_v1';
@@ -168,6 +189,94 @@ export class AuthClient {
       const data = (await res.json()) as { cosmetics: PlayerCosmetics };
       this.user.cosmetics = data.cosmetics;
       return true;
+    } catch {
+      return false;
+    }
+  }
+
+  public async getFriends(): Promise<FriendsApiPayload | null> {
+    if (!this.token || !this.user) return null;
+    try {
+      const res = await fetch('/api/friends', {
+        headers: { Authorization: `Bearer ${this.token}` },
+      });
+      if (!res.ok) return null;
+      return (await res.json()) as FriendsApiPayload;
+    } catch {
+      return null;
+    }
+  }
+
+  public async sendFriendRequest(
+    username: string,
+  ): Promise<{ ok: true; autoAccepted?: boolean; targetUsername?: string } | { ok: false; error: string }> {
+    if (!this.token || !this.user) {
+      return { ok: false, error: 'Bạn cần đăng nhập để kết bạn.' };
+    }
+    try {
+      const res = await fetch('/api/friends/request', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.token}`,
+        },
+        body: JSON.stringify({ username }),
+      });
+      const data = (await res.json()) as {
+        ok?: boolean;
+        autoAccepted?: boolean;
+        targetUsername?: string;
+        error?: string;
+      };
+      if (!res.ok || !data.ok) {
+        return { ok: false, error: data.error || 'Không thể gửi lời mời kết bạn.' };
+      }
+      return {
+        ok: true,
+        autoAccepted: !!data.autoAccepted,
+        targetUsername: data.targetUsername,
+      };
+    } catch {
+      return { ok: false, error: 'Không thể kết nối máy chủ.' };
+    }
+  }
+
+  public async respondFriendRequest(
+    requestId: number,
+    accept: boolean,
+  ): Promise<{ ok: boolean; error?: string }> {
+    if (!this.token || !this.user) return { ok: false, error: 'Chưa đăng nhập.' };
+    try {
+      const res = await fetch('/api/friends/respond', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.token}`,
+        },
+        body: JSON.stringify({ requestId, accept }),
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !data.ok) {
+        return { ok: false, error: data.error || 'Không thể xử lý lời mời.' };
+      }
+      return { ok: true };
+    } catch {
+      return { ok: false, error: 'Không thể kết nối máy chủ.' };
+    }
+  }
+
+  public async removeFriend(friendUserId: number): Promise<boolean> {
+    if (!this.token || !this.user) return false;
+    try {
+      const res = await fetch('/api/friends/remove', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.token}`,
+        },
+        body: JSON.stringify({ friendUserId }),
+      });
+      return res.ok;
     } catch {
       return false;
     }

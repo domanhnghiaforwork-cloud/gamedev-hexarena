@@ -51,3 +51,62 @@ Tài liệu ghi nhận quá trình phát triển nhánh **Giai đoạn 3** trong
   * **Mảnh Đơn lẻ mặc định chọn hết:** Mọi mảnh tự động `selected = true` ngay khi vào trận hoặc khi chuyển về trạng thái Đơn lẻ.
   * **Ulti Đánh gần (*Phản Chém Tước Mảnh*):** Tự động phóng to kích thước **150%** trong suốt 8s nhưng vẫn giữ nguyên độ cứng/độ bền như kích thước **100%**, tự hoàn lại kích thước cũ khi hết chiêu.
   * **Ulti Phòng thủ (*Pháo Đài Phản Xung*):** Tự phát sóng xung kích phản đòn nhỏ gây sát thương mỗi khi bị tấn công trong thời gian duy trì (`miniPulseCd = 0.30s`), đồng thời mở rộng tầm & tăng lực đẩy lùi của Sóng Phản Xung cuối.
+
+---
+
+## v3.3 — 25/11/2026: Danh sách Bạn bè ở Sảnh, Lời mời đấu PvP & Xem trận đấu Trực tiếp Thời gian thực (PvP + Bot)
+
+* **Hệ thống Kết bạn & Lưu trữ SQLite (`server/db.ts`, `server/index.ts`, `src/net/authClient.ts`):**
+  * Bổ sung bảng `friendships` và các phương thức `sendFriendRequest`, `respondFriendRequest`, `removeFriend`, `areFriends`, `listFriends` kèm tự động chấp nhận nếu hai người cùng gửi lời mời chéo.
+  * Bổ sung REST API (`GET /api/friends`, `POST /api/friends/request`, `POST /api/friends/respond`, `POST /api/friends/remove`) đồng bộ real-time qua WebSocket (`friends_list_dirty`).
+* **Trạng thái Hoạt động Thời gian thực & Nút Mời đấu PvP (`src/net/pvpClient.ts`, `src/ui/screens/lobby.ts`, `src/ui/modals/pvpRoomModal.ts`):**
+  * Duy trì kết nối WebSocket xác thực (`auth_ws`) liên tục sau khi đăng nhập để cập nhật tức thì trạng thái bạn bè (`Đang đấu PvP`, `Đang đấu Bot`, `Trong phòng PvP`, `Ở sảnh`, `Đang xem trận`, `Ngoại tuyến`).
+  * Bổ sung thanh **Bạn bè** bên cạnh trái Sảnh chờ (thu gọn được trên PC, ngăn kéo trượt trái trên Mobile landscape để giữ nguyên bố cục 1:1 đối xứng của 2 thẻ chính).
+  * Nút **`Mời`** gửi lời mời đấu PvP 1v1 trực tiếp (tự tạo phòng nếu người mời đang ở sảnh, hoặc mời ngay từ phòng chờ PvP); người nhận nhận thẻ thông báo nổi với nút **`Vào phòng`** / **`Từ chối`**.
+* **Cơ chế Xem trận đấu Trực tiếp Thời gian thực (Độ trễ 0 giây cho cả PvP và Bot):**
+  * **Trận PvP 1v1 (Server Fan-out):** Server gắn khán giả vào `Room.spectators` theo góc nhìn của người bạn đang xem (`player` hoặc `enemy`), phát snapshot 30Hz trực tiếp bằng `buildSeatSnapshot`.
+  * **Trận đấu Bot AI (On-Demand Client-Relay):** Trận Bot vẫn chạy local 0ms ping; chỉ khi có $\ge 1$ bạn bè bấm **`Xem`**, server gửi `bot_stream_toggle { active: true }` để máy người chơi stream snapshot 20Hz lên relay cho các khán giả, tự ngắt hoàn toàn khi khán giả cuối cùng rời đi.
+  * **Chế độ Khán giả (`src/net/pvpInterpolator.ts`, `src/ui/hud/topBar.ts`, `src/main.ts`):** Nội suy mượt cả 2 chiến binh ở 60fps không prediction, khóa toàn bộ nút điều khiển chiến đấu, hiển thị nhãn **`TRỰC TIẾP · PvP/BOT`**, tên 2 đấu thủ, bảng tổng kết theo tên người xem và nút **`Rời xem`**.
+* **Kiểm thử:** Bổ sung `tests/socialSpectate.test.ts` kiểm chứng vòng đời kết bạn SQLite, nội suy spectator và ánh xạ góc nhìn `buildSeatSnapshot`.
+
+---
+
+## v3.4 — 25/11/2026: Khung Giao diện & Điều khiển Đổi Ulti Linh hoạt trong Trận (PC Cách 1 + Mobile Giữ Kéo)
+
+* **Trạng thái & Đồng bộ Chọn Ulti theo từng Dạng (`src/core/types.ts`, `src/core/attacks/registry.ts`, `src/net/`):**
+  * Bổ sung `Fighter.selectedSpecialByMode` ghi nhớ Ulti đang chọn riêng cho từng phương thức (`loose`, `ranged`, `melee`, `defense`) xuyên suốt trận đấu.
+  * Thêm `getFighterSelectedSpecialInfo`, `setFighterSpecialSkill`, `cycleFighterSpecialSkill` và tham số `overrideSkillId` trong `triggerFighterSpecial` (tự động đổi + tung chiêu nếu sẵn sàng, hoặc chỉ đổi mặc định không báo lỗi nếu đang hồi chiêu).
+  * Mở rộng giao thức PvP (`PvPAction`: `set_special_skill`, `special { skillId? }`, `SerializedFighter.selectedSpecialByMode`) để đồng bộ server PvP và khán giả xem trực tiếp.
+* **Điều khiển & HUD Mobile (`src/input/inputManager.ts`, `src/input/hudPresets.ts`, `src/render/hud/hudRenderer.ts`):**
+  * Huy hiệu số **`1` / `2`...** ở góc nút Ulti cho biết kỹ năng mặc định hiện tại.
+  * **Bấm nhanh:** Tung ngay Ulti mặc định. **Nhấn giữ ($\ge 165\text{ms}$ hoặc kéo lệch nút):** Bung vòng cung các ô chiêu `1, 2...` tương ứng dạng đang cầm — kéo thả vào ô để **dùng ngay** (nếu đã hồi) hoặc **đổi mặc định** (nếu đang hồi), thả tại tâm nút để hủy; hỗ trợ xoay hướng bung vòng cung trong Trình tùy chỉnh HUD Mobile.
+* **Điều khiển & HUD PC — Cách 1 (`src/storage/profiles.ts`, `src/input/`, `src/render/hud/hudRenderer.ts`):**
+  * Phím **`C`** (`special`) giữ phản xạ 0ms bấm là dùng ngay Ulti đang chọn.
+  * Phím **`V`** (`cycleSpecial`, tùy chỉnh được trong Cài đặt phím PC): **Bấm nhanh `V`** để xoay vòng chiêu `1 → 2...`; **Giữ `V`** để mở vòng xoay chọn nhanh quanh con trỏ chuột (hoặc click trực tiếp các nút số `1 | 2` phía trên nút Ulti trên thanh Dock).
+* **Kiểm thử:** Bổ sung `tests/specialSelector.test.ts` kiểm chứng lưu chọn theo từng dạng, giữ `V`/giữ chạm, tọa độ radial và keybind mặc định `cycleSpecial`.
+
+---
+
+## v3.5 — 25/11/2026: Kỹ năng Đặc biệt #2 cho Đơn lẻ (`Lưới Quang Lục Giác`) & Nút Tắt/Bật Bot Test Kỹ năng
+
+* **Kỹ năng Đặc biệt #2 nhánh Đơn lẻ — `Lưới Quang Lục Giác` (`loose:prism_web`):**
+  * Thiết kế tại `src/core/attacks/loose/specials/prismWeb.ts` và đăng ký vào `LOOSE_ATTACK_MODE` (ô số `2` trên cả PC lẫn Mobile).
+  * **Thời lượng:** `12s` (`22s` hồi chiêu). Khi bật tự động chuyển kiểu phóng sang **Cắm & Thu** (`fireMode = 'xayah'`).
+  * **Thuật toán Bao Lồi theo Cụm (`computePrismWebClusters` trong `src/core/world/structure.ts`):** Gom nhóm mọi mảnh đang `PLANTED` nằm trong tầm `R` (= đường kính của *Trường Trọng Lực*), sau đó dựng **Bao Lồi (Andrew's Monotone Chain Convex Hull)** cho từng cụm.
+  * **Hiệu ứng:** Phát tia laze 3 lớp dọc các cạnh nối gây sát thương theo nhịp (`0.30s` / lần), đồng thời vùng đa giác khép kín (từ $\ge 3$ mảnh) làm chậm **40%** tốc độ di chuyển & lướt của địch (`LOOSE_PRISM_SLOW_FACTOR = 0.60`).
+  * Tách riêng cờ `isLooseGravityFieldActive` và `isLoosePrismWebActive` để *Lưới Quang* không kích hoạt nhầm hiệu ứng phóng to vòng quay của *Trường Trọng Lực*.
+* **Nút Tắt/Bật Bot khi Đấu với Bot (`index.html`, `topBar.ts`, `main.ts`):**
+  * Bổ sung nút **`Bot: Bật` / `Bot: Tắt`** trên thanh TopBar khi đấu với Bot (ẩn khi đấu PvP hoặc đang Xem trực tiếp). Khi tắt, Bot đứng yên hoàn toàn tại chỗ để người chơi thử nghiệm chiêu thức và đo sát thương thuận tiện.
+* **Kiểm thử:** Bổ sung `tests/prismWeb.test.ts` kiểm chứng phân cụm Bao Lồi, vùng chậm `-40%`, tự chuyển `Cắm & Thu` và sát thương tia laze.
+
+---
+
+## v3.6 — 25/11/2026: Kỹ năng Đặc biệt #2 cho Phòng thủ (`Tường Lục Giác`)
+
+* **Kỹ năng Đặc biệt #2 nhánh Phòng thủ — `Tường Lục Giác` (`defense:hex_wall`):**
+  * Đăng ký tại `src/core/attacks/defense/specials/hexWall.ts` & `DEFENSE_ATTACK_MODE` (ô số `2` trên PC & Mobile).
+  * **Thông số:** Thời lượng kích hoạt `8s` (hồi `20s`), cooldown đặt tường `0.5s`, mỗi bức tường gồm **4 mảnh chất liệu Base** ở kích thước & độ bền **100%** (`220 HP/mảnh`, `hard = 100`), tồn tại **`5s`** và giới hạn tối đa **4 tường** cùng lúc (đặt tường thứ 5 sẽ giải tán tường cũ nhất).
+  * **Vật lý Tường thật (`simulation.ts`, `combat.ts`, `pvpInterpolator.ts`, `protocol.ts`):** Mảnh sinh ra từ kỹ năng (không tiêu hao mảnh vũ khí), **chặn di chuyển/lướt của cả 2 bên** và **chặn đòn đánh** theo cơ chế va chạm Mảnh–Mảnh (cần đánh vỡ mảnh tường để mở đường), đồng bộ đầy đủ qua PvP & Xem trực tiếp.
+  * **Tách bạch hai Ulti Phòng thủ:** Bổ sung `isDefenseFortressActive` và `isDefenseHexWallActive` để *Tường Lục Giác* không bị khóa Lướt, không giảm 40% tốc chạy hay khóa xoay thân như *Pháo Đài Phản Xung*.
+  * **Điều khiển & Xem trước (`inputManager.ts`, `indicatorRenderer.ts`, `hudRenderer.ts`):** Hiện bóng mờ 4 mảnh tường sát trước mặt; trên Mobile giữ & xoay nút Đánh (nhãn **`TƯỜNG`**) rồi thả để đặt, trên PC rê chuột để xoay góc và click chuột trái để đặt.
+* **Kiểm thử:** Bổ sung `tests/hexWall.test.ts` kiểm chứng đặt tường 4 mảnh Base 100%, giới hạn 4 tường, tự tan sau 5s, chặn di chuyển cả 2 phe, đỡ đòn địch và đồng bộ `buildSeatSnapshot`.

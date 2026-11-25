@@ -49,7 +49,46 @@
 
 ---
 
-## LỘ TRÌNH TIẾP THEO TRONG PHASE 3 (`v3.3+`)
+## GIAI ĐOẠN 3.2 (`v3.3`) — BẠN BÈ, MỜI ĐẤU PVP & XEM TRỰC TIẾP THỜI GIAN THỰC
+
+### 1. Hệ thống Bạn bè & Hiện diện Thời gian thực (Real-Time Presence)
+* Lưu quan hệ bạn bè trong SQLite (`friendships`: `pending` / `accepted`), hỗ trợ gửi lời mời theo `username`, chấp nhận/từ chối và xóa bạn.
+* Giao diện **Bạn bè** đặt ở cạnh trái Sảnh chờ (dạng cột thu gọn được trên PC, dạng ngăn kéo trượt bên trái trên Mobile landscape) sắp xếp theo ưu tiên hoạt động: `Đang đấu PvP` → `Đang đấu Bot` → `Trong phòng PvP` → `Ở sảnh` → `Đang xem trận` → `Ngoại tuyến`.
+
+### 2. Mời đấu PvP 1v1 trực tiếp (`Mời`)
+* Với bạn bè đang ở trạng thái `Ở sảnh`, người chơi bấm **`Mời`** ở thanh Bạn bè hoặc trong Phòng chờ PvP để gửi lời mời trực tiếp vào phòng.
+* Người nhận thấy thẻ mời nổi tức thì ở góc trên phải với nút **`Vào phòng`** (vào thẳng phòng chờ) hoặc **`Từ chối`**.
+
+### 3. Xem trận đấu Trực tiếp Thời gian thực (0 giây trễ — PvP & Bot)
+* Cứ đã là bạn bè thì có quyền bấm **`Xem`** trận đang diễn ra của nhau:
+  * **Trận PvP 1v1:** Server phát trực tiếp snapshot 30Hz từ `Room` đang mô phỏng 60Hz theo góc nhìn của người bạn được xem.
+  * **Trận đấu Bot AI:** Trận Bot chạy local ở máy người chơi để giữ độ trễ 0ms; chỉ khi có bạn bè bấm **`Xem`**, máy người chơi bật luồng relay 20Hz (`bot_stream_toggle`) gửi snapshot qua server tới các khán giả (tắt tức thì khi không còn ai xem).
+* Trong chế độ Khán giả (`spectate`), HUD ẩn điều khiển chiến đấu, hiển thị huy hiệu `TRỰC TIẾP` và nút **`Rời xem`**.
+
+---
+
+## GIAI ĐOẠN 3.3 (`v3.4`) — KHUNG ĐỔI KỸ NĂNG ĐẶC BIỆT (ULTI) LINH HOẠT TRONG TRẬN
+
+* **Lưu lựa chọn theo từng phương thức (`selectedSpecialByMode`):** Ghi nhớ riêng Ulti đang chọn cho *Đơn lẻ / Đánh xa / Đánh gần / Phòng thủ* trong suốt trận đấu, đồng bộ đầy đủ qua PvP Server & Xem trực tiếp.
+* **Cơ chế Mobile (Nút Ulti + Giữ Kéo Radial):**
+  * Góc trên phải nút Ulti hiển thị huy hiệu số (`1`, `2`...) biểu thị chiêu đang gán.
+  * **Bấm nhanh:** Kích hoạt ngay Ulti mặc định.
+  * **Nhấn giữ ($\ge 165\text{ms}$ hoặc kéo ra ngoài nút):** Bung các nút tròn `1, 2...` tương ứng với các chiêu của dạng đang cầm. Kéo thả sang ô chiêu sẽ **dùng ngay** (nếu đã hồi chiêu) hoặc **đổi chiêu mặc định** (nếu đang hồi chiêu); thả về tâm nút để hủy.
+* **Cơ chế PC — Cách 1 (`C` dùng ngay · `V` đổi / giữ chọn):**
+  * **`C` (`special`):** Giữ phản xạ 0ms — bấm là kích hoạt ngay Ulti đang chọn.
+  * **`V` (`cycleSpecial`):** Bấm nhanh để xoay vòng `1 → 2...`; nhấn giữ `V` để bung vòng chọn quanh con trỏ chuột (đã hồi thì chọn + dùng luôn, đang hồi thì đổi mặc định); hoặc click trực tiếp các nút số `1 | 2` phía trên nút Ulti ở thanh Dock.
+* **Ulti #2 nhánh Đơn lẻ (`Lưới Quang Lục Giác` — `loose:prism_web`, `12s`):**
+  * Tự chuyển sang **Cắm & Thu**; mọi mảnh cắm trong phạm vi `R` (= đường kính *Trường Trọng Lực*) tự gom cụm tạo thành **Bao Lồi (Convex Hull)**.
+  * Các cạnh nối phát **tia laze** gây sát thương liên tục khi địch chạm phải; vùng đa giác khép kín từ $\ge 3$ mảnh làm **chậm 40%** tốc độ di chuyển/lướt của địch.
+* **Tiện ích Test Kỹ năng (Đấu với Bot):** Nút **`Bot: Bật / Tắt`** trên thanh HUD cho phép cho Bot đứng yên tại chỗ để thử chiêu và căn góc combo.
+* **Ulti #2 nhánh Phòng thủ (`Tường Lục Giác` — `defense:hex_wall`, `8s`):**
+  * Cho phép dựng tường gồm **4 mảnh Base** (kích thước & độ bền **100%**) sát trước mặt mỗi `0.5s`, tồn tại `5s`, tối đa **4 tường cùng lúc**.
+  * Không bị khóa tốc độ hay khóa Lướt như *Pháo Đài*; tường chặn cả 2 bên và đỡ đòn theo vật lý Mảnh–Mảnh.
+  * **Mobile:** giữ & xoay nút Đánh để ngắm bóng mờ 4 mảnh, thả để đặt; **PC:** rê chuột ngắm bóng mờ và bấm chuột trái để đặt.
+
+---
+
+## LỘ TRÌNH TIẾP THEO TRONG PHASE 3 (`v3.5+`)
 * **Giai đoạn 3.2 — Mở rộng Ulti 1-N:** Bổ sung kỹ năng đặc biệt thứ 2 cho mỗi trong 4 phương thức tấn công, chọn trực tiếp trong Xưởng Vũ Khí và hiển thị rõ trên HUD.
 * **Giai đoạn 3.3 — Bản đồ đấu trường & Anti-Stall:** Thêm 3–4 kiểu bố cục vật cản lựa chọn trước trận và cơ chế vòng bo chống câu giờ.
 * **Giai đoạn 3.4 — Phòng tập, Quick Match & Xếp hạng:** Chế độ tập luyện tự do, ghép trận PvP 1 nút và bảng xếp hạng ELO trên SQLite.

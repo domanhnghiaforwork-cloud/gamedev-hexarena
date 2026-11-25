@@ -2,12 +2,12 @@ import { BASE_HEX_RADIUS, PLAYER_MOVE_SPEED, PLAYER_RADIUS } from '@core/constan
 import { axialToLocal, clamp, lerp } from '@core/math/hexMath';
 import { constrainToHexArena, resolveCircleObstacle } from '@core/world/obstacles';
 import {
-  LOOSE_GRAVITY_SLOW_FACTOR,
   getActiveAnchorDist,
+  getEnemyLooseSlowFactor,
+  isDefenseFortressActive,
   isHexStolen,
-  isInsideLooseGravityField,
 } from '@core/world/structure';
-import type { Fighter, HexEntity, MatchState, Obstacle } from '@core/types';
+import type { Fighter, HexEntity, MatchState, Obstacle, SummonedWall } from '@core/types';
 import {
   lerpAngle,
   type MatchSnapshot,
@@ -89,9 +89,9 @@ export class PvPInterpolator {
       this.initializedPred = true;
     }
 
-    const inEnemyGravity = isInsideLooseGravityField(state.enemy, this.predX, this.predY, PLAYER_RADIUS * 0.5);
+    const bodySlowMult = getEnemyLooseSlowFactor(state.enemy, this.predX, this.predY, PLAYER_RADIUS * 0.5);
     const moveMult =
-      (p.specialActive?.type === 'defense' ? 0.60 : 1.0) * (inEnemyGravity ? LOOSE_GRAVITY_SLOW_FACTOR : 1.0);
+      (isDefenseFortressActive(p) ? 0.60 : 1.0) * bodySlowMult;
     this.pendingMoves.push({ seq, dt, mx, my, moveMult });
     if (this.pendingMoves.length > 90) {
       this.pendingMoves.shift();
@@ -99,7 +99,7 @@ export class PvPInterpolator {
 
     // Only predict normal walking (server owns dash & knockback bursts seamlessly via reconciliation)
     if (p.dashTimer <= 0) {
-      const next = this.simulateSingleStep(this.predX, this.predY, mx, my, moveMult, dt, state.obstacles);
+      const next = this.simulateSingleStep(this.predX, this.predY, mx, my, moveMult, dt, state.obstacles, state.walls);
       this.predX = next.x;
       this.predY = next.y;
     }
@@ -113,6 +113,7 @@ export class PvPInterpolator {
     moveMult: number,
     dt: number,
     obstacles: Obstacle[],
+    walls: SummonedWall[] = [],
   ): { x: number; y: number } {
     const pos = { x, y };
     const mLen = Math.hypot(mx, my);
@@ -129,20 +130,43 @@ export class PvPInterpolator {
         pos.y += hit.ny * hit.push;
       }
     }
+    const minWD = PLAYER_RADIUS + BASE_HEX_RADIUS * 0.92;
+    for (const w of walls) {
+      for (const wh of w.hexes) {
+        if (wh.broken) continue;
+        const wdx = pos.x - wh.x;
+        const wdy = pos.y - wh.y;
+        const wd = Math.hypot(wdx, wdy);
+        if (wd < minWD && wd > 1e-4) {
+          const push = minWD - wd;
+          pos.x += (wdx / wd) * push;
+          pos.y += (wdy / wd) * push;
+        }
+      }
+    }
     return pos;
   }
 
   /**
-   * Pushes an authoritative Server snapshot into the timeline buffer & reconciles local prediction.
+   * Pushes an authoritative Server (or relayed Bot) snapshot into the timeline buffer.
+   * When `isSpectator` is true, skips local prediction reconciliation and tunes the buffer
+   * to the expected stream interval (~33ms PvP / ~50ms Bot).
    */
-  public pushSnapshot(snap: MatchSnapshot, nowMs: number, obstacles: Obstacle[]): void {
-    // Track inter-arrival jitter to adapt interpolation buffer automatically (28ms..85ms)
+  public pushSnapshot(
+    snap: MatchSnapshot,
+    nowMs: number,
+    obstacles: Obstacle[],
+    isSpectator = false,
+    expectedIntervalMs = 1000 / 60,
+  ): void {
+    // Track inter-arrival jitter to adapt interpolation buffer automatically
     if (this.lastRecvTime > 0) {
       const delta = nowMs - this.lastRecvTime;
-      const expected = 1000 / 60;
-      const jitter = Math.abs(delta - expected);
+      const jitter = Math.abs(delta - expectedIntervalMs);
       this.jitterEwma = lerp(this.jitterEwma, jitter, 0.15);
-      const targetDelay = clamp(24 + this.jitterEwma * 2.2, 28, 85);
+      const targetDelay = isSpectator
+        ? clamp(expectedIntervalMs * 1.35 + this.jitterEwma * 1.6, 32, 120)
+        : clamp(24 + this.jitterEwma * 2.2, 28, 85);
       this.interpDelayMs = lerp(this.interpDelayMs, targetDelay, 0.12);
     }
     this.lastRecvTime = nowMs;
@@ -158,6 +182,10 @@ export class PvPInterpolator {
     this.buffer.push({ recvTime: nowMs, serverTime: snap.serverTime, snap });
     if (this.buffer.length > 14) {
       this.buffer.shift();
+    }
+
+    if (isSpectator) {
+      return;
     }
 
     // Reconcile local player prediction against authoritative server position
@@ -207,7 +235,7 @@ export class PvPInterpolator {
   /**
    * Renders smooth 60/120fps state into `state` every display frame!
    */
-  public applyFrame(state: MatchState, nowMs: number, frameDt: number): boolean {
+  public applyFrame(state: MatchState, nowMs: number, frameDt: number, isSpectator = false): boolean {
     if (this.buffer.length === 0) return false;
 
     const latest = this.buffer[this.buffer.length - 1].snap;
@@ -231,7 +259,14 @@ export class PvPInterpolator {
       state.stats.elapsed = latest.elapsed;
     }
 
-    // Choose interpolation pair (A, B) along the synchronized server timeline
+    if (latest.walls) {
+      state.walls = latest.walls.map((w) => ({
+        ...w,
+        hexes: w.hexes.map((wh) => ({ ...wh })),
+      }));
+    } else if (state.walls.length > 0) {
+      state.walls = [];
+    }
     const offset = this.clockOffsetMs ?? (nowMs - latest.serverTime);
     const renderServerTime = nowMs - offset - this.interpDelayMs;
 
@@ -255,7 +290,12 @@ export class PvPInterpolator {
     // 1. Apply Opponent (pure smooth timeline interpolation + bounded extrapolation)
     this.applyFighterInterpolated(state.enemy, entryA.snap.opp, entryB.snap.opp, latest.opp, alpha, extrapSec, frameDt, false);
 
-    // 2. Apply Local Player (Client-Side Prediction + Smooth Error Decay for 0ms movement responsiveness!)
+    // 2. Apply Watched Friend (Spectator) OR Local Player (Prediction + Smooth Error Decay)
+    if (isSpectator) {
+      this.applyFighterInterpolated(state.player, entryA.snap.self, entryB.snap.self, latest.self, alpha, extrapSec, frameDt, false);
+      return state.player.form !== prevForm;
+    }
+
     const decay = Math.exp(-frameDt * 16);
     this.predErrX *= decay;
     this.predErrY *= decay;
@@ -338,6 +378,9 @@ export class PvPInterpolator {
     target.specialCooldown = latest.specialCooldown;
     target.specialMaxCooldown = latest.specialMaxCooldown;
     target.specialActive = latest.specialActive;
+    if (latest.selectedSpecialByMode) {
+      target.selectedSpecialByMode = { ...latest.selectedSpecialByMode };
+    }
 
     // Synthesize smooth local Dash afterimages at display refresh rate!
     for (let i = target.dashAfterimages.length - 1; i >= 0; i--) {

@@ -2,13 +2,13 @@ import { DEFAULT_COSMETICS, type PlayerCosmetics } from '@config/cosmetics';
 import { ARENA_RADIUS, PLAYER_RADIUS } from '@core/constants';
 import { clamp, lerp } from '@core/math/hexMath';
 import { findPlantedHexAtWorld } from '@attacks/loose/attack';
-import { isInsideLooseGravityField } from '@core/world/structure';
+import { getEnemyLooseSlowFactor } from '@core/world/structure';
 import type { MatchState } from '@core/types';
 import type { LiveInputState } from '@input/inputManager';
 import type { MobileWidgetId, PCControlConfig } from '@storage/profiles';
 import { getViewportSize } from '@ui/common/fullscreen';
 import { renderArena } from './world/arenaRenderer';
-import { renderFighterBody, renderFighterHexLayer, renderGravityField } from './world/entityRenderer';
+import { renderFighterBody, renderFighterHexLayer, renderGravityField, renderPrismWeb, renderSummonedWalls } from './world/entityRenderer';
 import { renderDesktopCanvasHUD, renderMobileCanvasHUD } from './hud/hudRenderer';
 import { renderDesktopReticle, renderSkillIndicator } from './effects/indicatorRenderer';
 import { VFXManager } from './effects/vfxRenderer';
@@ -92,16 +92,21 @@ export class GameRenderer {
 
     renderArena(ctx, state.obstacles);
 
-    // Loose Gravity Fields beneath fighters & hexes
+    // Loose Gravity Fields, Prism Web Polygons & Summoned Hex Walls beneath fighters
     renderGravityField(ctx, state.enemy, nowSec, playerCosmetics);
     renderGravityField(ctx, state.player, nowSec, playerCosmetics);
+    renderPrismWeb(ctx, state.enemy, nowSec);
+    renderPrismWeb(ctx, state.player, nowSec);
+    renderSummonedWalls(ctx, state.walls, nowSec);
 
-    // Skill Indicator under fighters
-    renderSkillIndicator(ctx, state.player, live.cancelHovered);
+    // Skill Indicator under fighters (hidden in Lobby & Spectator mode)
+    if (!hideHUD) {
+      renderSkillIndicator(ctx, state.player, live.cancelHovered, live.mode === 'desktop');
+    }
 
     // Desktop Hover Target Detection for RMB Single-Hex Recall
     let hoverPlantedId = -1;
-    if (live.mode === 'desktop' && live.mouse.active && state.player.form === 'loose') {
+    if (!hideHUD && live.mode === 'desktop' && live.mouse.active && state.player.form === 'loose') {
       const found = findPlantedHexAtWorld(state.player, live.mouse.wx, live.mouse.wy);
       if (found) hoverPlantedId = found.id;
     }
@@ -111,20 +116,12 @@ export class GameRenderer {
     renderFighterHexLayer(ctx, state.player, false, nowSec, hoverPlantedId, playerCosmetics);
 
     // Fighter Bodies
-    const enemyInGravity = isInsideLooseGravityField(
-      state.player,
-      state.enemy.x,
-      state.enemy.y,
-      PLAYER_RADIUS * 0.5
-    );
-    const playerInGravity = isInsideLooseGravityField(
-      state.enemy,
-      state.player.x,
-      state.player.y,
-      PLAYER_RADIUS * 0.5
-    );
-    renderFighterBody(ctx, state.enemy, nowSec, enemyInGravity, playerCosmetics);
-    renderFighterBody(ctx, state.player, nowSec, playerInGravity, playerCosmetics);
+    const enemySlowed =
+      getEnemyLooseSlowFactor(state.player, state.enemy.x, state.enemy.y, PLAYER_RADIUS * 0.5) < 1.0;
+    const playerSlowed =
+      getEnemyLooseSlowFactor(state.enemy, state.player.x, state.player.y, PLAYER_RADIUS * 0.5) < 1.0;
+    renderFighterBody(ctx, state.enemy, nowSec, enemySlowed, playerCosmetics);
+    renderFighterBody(ctx, state.player, nowSec, playerSlowed, playerCosmetics);
 
     // High-flight recalling hexes (over obstacles & fighters)
     renderFighterHexLayer(ctx, state.enemy, true, nowSec, -1, playerCosmetics);

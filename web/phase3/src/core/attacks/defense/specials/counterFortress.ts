@@ -1,7 +1,7 @@
 import { PLAYER_RADIUS } from '../../../constants';
 import { angleDiff, clamp, dist } from '../../../math/hexMath';
 import { segmentIntersectsAnyObstacle } from '../../../world/obstacles';
-import { isHexStolen } from '../../../world/structure';
+import { isDefenseFortressActive, isHexStolen } from '../../../world/structure';
 import type { Fighter, MatchState } from '../../../types';
 import { BUILTIN_SPECIAL_SKILL_IDS, type ApplyHexDurabilityLossFn, type SpecialSkillDefinition } from '../../types';
 
@@ -12,7 +12,7 @@ export function triggerShieldMiniPulse(
   absorbedEnergy: number,
   applyHexDurabilityLossFn: ApplyHexDurabilityLossFn,
 ): boolean {
-  if (state.matchOver || !defender.specialActive || defender.specialActive.type !== 'defense') {
+  if (state.matchOver || !isDefenseFortressActive(defender) || !defender.specialActive) {
     return false;
   }
   if ((defender.specialActive.miniPulseCd ?? 0) > 0) return false;
@@ -104,7 +104,7 @@ export function triggerShieldCounterPulse(
   opponent: Fighter,
   applyHexDurabilityLossFn: ApplyHexDurabilityLossFn,
 ): void {
-  if (!fighter.specialActive || fighter.specialActive.type !== 'defense') return;
+  if (!isDefenseFortressActive(fighter) || !fighter.specialActive) return;
   const stored = clamp(fighter.specialActive.storedEnergy ?? 0, 0, 360);
   const prevScale = fighter.specialActive.prevScale ?? 1.5;
   fighter.specialActive = null;

@@ -3,12 +3,17 @@ import { canvasFont } from '@config/typography';
 import { AXIAL_DIRS, BASE_HEX_RADIUS, PLAYER_RADIUS } from '@core/constants';
 import { axialKey, axialToLocal, clamp } from '@core/math/hexMath';
 import {
+  computePrismWebClusters,
   getActiveStance,
   getLooseGravityFieldRadius,
   getLooseOrbitRadius,
+  isDefenseFortressActive,
+  isDefenseHexWallActive,
   isHexStolen,
+  isLooseGravityFieldActive,
+  isLoosePrismWebActive,
 } from '@core/world/structure';
-import type { Fighter, HexEntity } from '@core/types';
+import type { Fighter, HexEntity, SummonedWall } from '@core/types';
 import { drawHexPolygon } from './arenaRenderer';
 
 export function renderGravityField(
@@ -17,7 +22,7 @@ export function renderGravityField(
   nowSec: number,
   playerCosmetics: PlayerCosmetics = DEFAULT_COSMETICS,
 ): void {
-  if (f.specialActive?.type !== 'loose') return;
+  if (!isLooseGravityFieldActive(f)) return;
   const fieldR = getLooseGravityFieldRadius(f);
   const orbitR = getLooseOrbitRadius(f);
   const isPlayer = f.id === 'player';
@@ -80,6 +85,99 @@ export function renderGravityField(
   ctx.stroke();
   ctx.restore();
 }
+
+
+export function renderPrismWeb(
+  ctx: CanvasRenderingContext2D,
+  f: Fighter,
+  nowSec: number,
+): void {
+  if (!isLoosePrismWebActive(f)) return;
+  const isPlayer = f.id === 'player';
+  const beamColor = isPlayer ? '#c084fc' : '#fb7185';
+  const coreColor = isPlayer ? '#f5d0fe' : '#ffe4e6';
+  const fillRgb = isPlayer ? '168, 85, 247' : '244, 63, 94';
+  const clusters = computePrismWebClusters(f);
+  const pulse = 0.5 + 0.5 * Math.sin(nowSec * 6.5);
+
+  ctx.save();
+  // Soft beacon ring on unlinked PLANTED hexes ready to tether
+  const planted = f.hexes.filter((h) => h.state === 'PLANTED');
+  const linkedIds = new Set<number>();
+  for (const c of clusters) {
+    for (const n of c.nodes) linkedIds.add(n.id);
+  }
+  for (const h of planted) {
+    if (linkedIds.has(h.id)) continue;
+    ctx.beginPath();
+    ctx.arc(h.x, h.y, BASE_HEX_RADIUS * f.currentScale + 8 + pulse * 2.5, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(${fillRgb}, 0.55)`;
+    ctx.lineWidth = 1.6;
+    ctx.setLineDash([4, 4]);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  for (const cluster of clusters) {
+    // Closed Convex Hull slow region (-40% enemy speed)
+    if (cluster.isClosed && cluster.hull.length >= 3) {
+      ctx.beginPath();
+      ctx.moveTo(cluster.hull[0].x, cluster.hull[0].y);
+      for (let i = 1; i < cluster.hull.length; i++) {
+        ctx.lineTo(cluster.hull[i].x, cluster.hull[i].y);
+      }
+      ctx.closePath();
+      ctx.fillStyle = `rgba(${fillRgb}, ${(0.15 + 0.05 * pulse).toFixed(3)})`;
+      ctx.fill();
+
+      ctx.strokeStyle = `rgba(${fillRgb}, 0.38)`;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([8, 6]);
+      ctx.lineDashOffset = -nowSec * 42;
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // 3-layer laser beams along every convex hull / tether edge
+    ctx.lineCap = 'round';
+    for (const [a, b] of cluster.edges) {
+      // Outer bloom
+      ctx.strokeStyle = `rgba(${fillRgb}, ${(0.28 + 0.10 * pulse).toFixed(3)})`;
+      ctx.lineWidth = 11 + pulse * 2.5;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+
+      // Mid neon beam
+      ctx.strokeStyle = beamColor;
+      ctx.lineWidth = 4.2 + pulse * 1.0;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+
+      // Crisp white laser core
+      ctx.strokeStyle = coreColor;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
+
+    // Pylon rings around convex hull vertices
+    for (const v of cluster.hull) {
+      ctx.beginPath();
+      ctx.arc(v.x, v.y, BASE_HEX_RADIUS * f.currentScale * 0.92 + 5, 0, Math.PI * 2);
+      ctx.strokeStyle = coreColor;
+      ctx.lineWidth = 2.0;
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
 
 export function renderFighterBody(
   ctx: CanvasRenderingContext2D,
@@ -194,7 +292,7 @@ export function renderFighterBody(
       ctx.arc(f.x, f.y, PLAYER_RADIUS + 9, 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
-    } else if (sp.type === 'defense') {
+    } else if (isDefenseFortressActive(f)) {
       const stored = sp.storedEnergy ?? 0;
       const chargeRatio = clamp(stored / 360, 0, 1);
       ctx.save();
@@ -211,11 +309,30 @@ export function renderFighterBody(
         ctx.stroke();
       }
       ctx.restore();
+    } else if (isDefenseHexWallActive(f)) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(45, 212, 191, 0.72)';
+      ctx.lineWidth = 2.2;
+      ctx.setLineDash([6, 5]);
+      ctx.lineDashOffset = -nowSec * 30;
+      drawHexPolygon(ctx, f.x, f.y, PLAYER_RADIUS + 11, nowSec * 0.6);
+      ctx.stroke();
+      ctx.restore();
     }
 
     // Active special duration arc around character
     const spColor =
-      sp.type === 'loose' ? mainColor : sp.type === 'melee' ? '#fbbf24' : sp.type === 'ranged' ? '#c084fc' : '#34d399';
+      sp.type === 'loose'
+        ? sp.skillId === 'loose:prism_web'
+          ? '#a855f7'
+          : mainColor
+        : sp.type === 'melee'
+          ? '#fbbf24'
+          : sp.type === 'ranged'
+            ? '#c084fc'
+            : isDefenseHexWallActive(f)
+              ? '#2dd4bf'
+              : '#34d399';
     ctx.strokeStyle = spColor;
     ctx.lineWidth = 3;
     ctx.beginPath();
@@ -247,6 +364,7 @@ export function renderFighterBody(
 
   ctx.restore();
 }
+
 
 function drawMaterialEmblem(
   ctx: CanvasRenderingContext2D,
@@ -289,6 +407,7 @@ function drawMaterialEmblem(
   ctx.restore();
 }
 
+
 function drawThreeTierCracks(ctx: CanvasRenderingContext2D, R: number, hpRatio: number, nowSec: number): void {
   if (hpRatio > 0.75) return;
   const tier = hpRatio <= 0.25 ? 3 : hpRatio <= 0.5 ? 2 : 1;
@@ -330,6 +449,81 @@ function drawThreeTierCracks(ctx: CanvasRenderingContext2D, R: number, hpRatio: 
     ctx.stroke();
   }
   ctx.restore();
+}
+
+
+export function renderSummonedWalls(
+  ctx: CanvasRenderingContext2D,
+  walls: SummonedWall[],
+  nowSec: number,
+): void {
+  if (walls.length === 0) return;
+  const R = BASE_HEX_RADIUS;
+
+  for (const wall of walls) {
+    const isPlayer = wall.ownerId === 'player';
+    const strokeColor = isPlayer ? '#2dd4bf' : '#fb7185';
+    const fillColor = isPlayer ? 'rgba(20, 184, 166, 0.28)' : 'rgba(244, 63, 94, 0.26)';
+    const expireAlpha = wall.timer < 1.0 ? clamp(wall.timer * (0.65 + 0.35 * Math.sin(nowSec * 18)), 0.15, 1) : 1;
+
+    ctx.save();
+    ctx.globalAlpha = expireAlpha;
+
+    // Weld bridges between intact adjacent hexes of this wall
+    const intact = wall.hexes.filter((wh) => !wh.broken);
+    ctx.strokeStyle = strokeColor;
+    ctx.lineCap = 'round';
+    for (let i = 0; i < intact.length - 1; i++) {
+      if (Math.abs(intact[i + 1].id - intact[i].id) !== 1) continue;
+      ctx.globalAlpha = expireAlpha * 0.42;
+      ctx.lineWidth = 7;
+      ctx.beginPath();
+      ctx.moveTo(intact[i].x, intact[i].y);
+      ctx.lineTo(intact[i + 1].x, intact[i + 1].y);
+      ctx.stroke();
+
+      ctx.strokeStyle = '#f8fafc';
+      ctx.globalAlpha = expireAlpha * 0.72;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.strokeStyle = strokeColor;
+    }
+
+    for (const wh of intact) {
+      // 2.5D shadow
+      ctx.globalAlpha = expireAlpha;
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.26)';
+      drawHexPolygon(ctx, wh.x + 3, wh.y + 5, R * 0.94, wall.angle + Math.PI / 6);
+      ctx.fill();
+
+      // Base-material hex block
+      drawHexPolygon(ctx, wh.x, wh.y, R * 0.96, wall.angle + Math.PI / 6);
+      ctx.fillStyle = wh.flashTimer > 0 ? 'rgba(255, 255, 255, 0.72)' : fillColor;
+      ctx.fill();
+      ctx.strokeStyle = wh.flashTimer > 0 ? '#ffffff' : strokeColor;
+      ctx.lineWidth = 2.2;
+      ctx.stroke();
+
+      // Inner shield glyph ring
+      drawHexPolygon(ctx, wh.x, wh.y, R * 0.48, wall.angle + Math.PI / 6);
+      ctx.strokeStyle = 'rgba(248, 250, 252, 0.45)';
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+
+      // Durability bar if damaged
+      const hpRatio = clamp(wh.hp / Math.max(1, wh.maxHp), 0, 1);
+      if (hpRatio < 0.98) {
+        const bw = R * 1.3;
+        const bx = wh.x - bw * 0.5;
+        const by = wh.y - R - 7;
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+        ctx.fillRect(bx, by, bw, 3.2);
+        ctx.fillStyle = hpRatio > 0.5 ? strokeColor : '#fbbf24';
+        ctx.fillRect(bx, by, bw * hpRatio, 3.2);
+      }
+    }
+    ctx.restore();
+  }
 }
 
 export function renderFighterHexLayer(
@@ -433,13 +627,15 @@ export function renderFighterHexLayer(
     for (const h of assembled) byKey.set(axialKey(h.q, h.r), h);
 
     const weldColor =
-      f.specialActive?.type === 'defense'
+      isDefenseFortressActive(f)
         ? '#34d399'
-        : f.specialActive?.type === 'melee'
-          ? '#fbbf24'
-          : f.specialActive?.type === 'ranged'
-            ? '#c084fc'
-            : baseColor;
+        : isDefenseHexWallActive(f)
+          ? '#2dd4bf'
+          : f.specialActive?.type === 'melee'
+            ? '#fbbf24'
+            : f.specialActive?.type === 'ranged'
+              ? '#c084fc'
+              : baseColor;
     const pulse = 0.72 + 0.22 * Math.sin(nowSec * 7);
 
     const pairs: Array<[HexEntity, HexEntity]> = [];
@@ -548,8 +744,10 @@ export function renderFighterHexLayer(
       strokeColor = '#fbbf24';
     } else if (f.specialActive?.type === 'ranged' && h.state === 'ASSEMBLED') {
       strokeColor = '#c084fc';
-    } else if (f.specialActive?.type === 'defense' && h.state === 'ASSEMBLED') {
+    } else if (isDefenseFortressActive(f) && h.state === 'ASSEMBLED') {
       strokeColor = '#34d399';
+    } else if (isDefenseHexWallActive(f) && h.state === 'ASSEMBLED') {
+      strokeColor = '#2dd4bf';
     }
 
     // Hover highlight for PC Right-Click targeted recall

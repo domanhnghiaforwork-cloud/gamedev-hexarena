@@ -23,6 +23,25 @@ export interface UserRecord {
   cosmetics: PlayerCosmetics | null;
 }
 
+export interface FriendRecord {
+  userId: number;
+  username: string;
+  since: string;
+}
+
+export interface FriendRequestRecord {
+  requestId: number;
+  userId: number;
+  username: string;
+  createdAt: string;
+}
+
+export interface FriendsData {
+  friends: FriendRecord[];
+  incoming: FriendRequestRecord[];
+  outgoing: FriendRequestRecord[];
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, 'data');
 
@@ -98,6 +117,20 @@ export class UserStore {
     if (!colNames.has('cosmetics_json')) {
       this.db.exec('ALTER TABLE users ADD COLUMN cosmetics_json TEXT;');
     }
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS friendships (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        requester_id INTEGER NOT NULL,
+        addressee_id INTEGER NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('pending','accepted')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(requester_id, addressee_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_friendships_requester ON friendships(requester_id);
+      CREATE INDEX IF NOT EXISTS idx_friendships_addressee ON friendships(addressee_id);
+    `);
   }
 
   private parseRowToUser(row: Record<string, unknown>): UserRecord {
@@ -290,5 +323,177 @@ export class UserStore {
       .run(JSON.stringify(clean), id);
     if (Number(res.changes) === 0) return null;
     return clean;
+  }
+
+  public sendFriendRequest(
+    requesterId: number,
+    rawTargetUsername: string,
+  ):
+    | { ok: true; autoAccepted: boolean; requestId?: number; targetUserId: number; targetUsername: string }
+    | { ok: false; error: string } {
+    const targetUsername = rawTargetUsername.trim();
+    if (!targetUsername) {
+      return { ok: false, error: 'Vui lòng nhập tên người chơi muốn kết bạn.' };
+    }
+
+    const target = this.db
+      .prepare('SELECT id, username FROM users WHERE username = ?')
+      .get(targetUsername) as { id: number; username: string } | undefined;
+
+    if (!target) {
+      return { ok: false, error: 'Không tìm thấy người chơi này.' };
+    }
+    const targetId = Number(target.id);
+    const resolvedName = String(target.username);
+    if (targetId === requesterId) {
+      return { ok: false, error: 'Không thể tự kết bạn với chính mình.' };
+    }
+
+    const existing = this.db
+      .prepare(
+        `SELECT id, requester_id, addressee_id, status
+         FROM friendships
+         WHERE (requester_id = ? AND addressee_id = ?) OR (requester_id = ? AND addressee_id = ?)`,
+      )
+      .get(requesterId, targetId, targetId, requesterId) as
+      | { id: number; requester_id: number; addressee_id: number; status: string }
+      | undefined;
+
+    if (existing) {
+      if (existing.status === 'accepted') {
+        return { ok: false, error: 'Hai bạn đã là bạn bè.' };
+      }
+      if (Number(existing.requester_id) === requesterId) {
+        return { ok: false, error: 'Bạn đã gửi lời mời kết bạn cho người này rồi.' };
+      }
+      // Target already sent a pending request to requester -> auto-accept!
+      this.db
+        .prepare("UPDATE friendships SET status = 'accepted', updated_at = datetime('now') WHERE id = ?")
+        .run(Number(existing.id));
+      return { ok: true, autoAccepted: true, targetUserId: targetId, targetUsername: resolvedName };
+    }
+
+    const res = this.db
+      .prepare("INSERT INTO friendships (requester_id, addressee_id, status) VALUES (?, ?, 'pending')")
+      .run(requesterId, targetId);
+
+    return {
+      ok: true,
+      autoAccepted: false,
+      requestId: Number(res.lastInsertRowid),
+      targetUserId: targetId,
+      targetUsername: resolvedName,
+    };
+  }
+
+  public respondFriendRequest(
+    userId: number,
+    requestId: number,
+    accept: boolean,
+  ): { ok: true; otherUserId: number; accepted: boolean } | { ok: false; error: string } {
+    const row = this.db
+      .prepare("SELECT id, requester_id FROM friendships WHERE id = ? AND addressee_id = ? AND status = 'pending'")
+      .get(requestId, userId) as { id: number; requester_id: number } | undefined;
+
+    if (!row) {
+      return { ok: false, error: 'Lời mời kết bạn không tồn tại hoặc đã được xử lý.' };
+    }
+
+    const otherUserId = Number(row.requester_id);
+    if (accept) {
+      this.db
+        .prepare("UPDATE friendships SET status = 'accepted', updated_at = datetime('now') WHERE id = ?")
+        .run(Number(row.id));
+    } else {
+      this.db.prepare('DELETE FROM friendships WHERE id = ?').run(Number(row.id));
+    }
+
+    return { ok: true, otherUserId, accepted: accept };
+  }
+
+  public removeFriend(userId: number, otherUserId: number): boolean {
+    const res = this.db
+      .prepare(
+        `DELETE FROM friendships
+         WHERE (requester_id = ? AND addressee_id = ?) OR (requester_id = ? AND addressee_id = ?)`,
+      )
+      .run(userId, otherUserId, otherUserId, userId);
+    return Number(res.changes) > 0;
+  }
+
+  public areFriends(uidA: number, uidB: number): boolean {
+    if (uidA === uidB) return false;
+    const row = this.db
+      .prepare(
+        `SELECT 1 FROM friendships
+         WHERE status = 'accepted'
+           AND ((requester_id = ? AND addressee_id = ?) OR (requester_id = ? AND addressee_id = ?))
+         LIMIT 1`,
+      )
+      .get(uidA, uidB, uidB, uidA);
+    return !!row;
+  }
+
+  public getAcceptedFriendIds(userId: number): number[] {
+    const rows = this.db
+      .prepare(
+        `SELECT CASE WHEN requester_id = ? THEN addressee_id ELSE requester_id END AS friend_id
+         FROM friendships
+         WHERE status = 'accepted' AND (requester_id = ? OR addressee_id = ?)`,
+      )
+      .all(userId, userId, userId) as Array<{ friend_id: number }>;
+    return rows.map((r) => Number(r.friend_id));
+  }
+
+  public listFriends(userId: number): FriendsData {
+    const friendRows = this.db
+      .prepare(
+        `SELECT u.id AS user_id, u.username AS username, f.updated_at AS since
+         FROM friendships f
+         JOIN users u ON u.id = CASE WHEN f.requester_id = ? THEN f.addressee_id ELSE f.requester_id END
+         WHERE f.status = 'accepted' AND (f.requester_id = ? OR f.addressee_id = ?)
+         ORDER BY u.username COLLATE NOCASE ASC`,
+      )
+      .all(userId, userId, userId) as Array<{ user_id: number; username: string; since: string }>;
+
+    const incomingRows = this.db
+      .prepare(
+        `SELECT f.id AS request_id, u.id AS user_id, u.username AS username, f.created_at AS created_at
+         FROM friendships f
+         JOIN users u ON u.id = f.requester_id
+         WHERE f.addressee_id = ? AND f.status = 'pending'
+         ORDER BY f.id DESC`,
+      )
+      .all(userId) as Array<{ request_id: number; user_id: number; username: string; created_at: string }>;
+
+    const outgoingRows = this.db
+      .prepare(
+        `SELECT f.id AS request_id, u.id AS user_id, u.username AS username, f.created_at AS created_at
+         FROM friendships f
+         JOIN users u ON u.id = f.addressee_id
+         WHERE f.requester_id = ? AND f.status = 'pending'
+         ORDER BY f.id DESC`,
+      )
+      .all(userId) as Array<{ request_id: number; user_id: number; username: string; created_at: string }>;
+
+    return {
+      friends: friendRows.map((r) => ({
+        userId: Number(r.user_id),
+        username: String(r.username),
+        since: String(r.since),
+      })),
+      incoming: incomingRows.map((r) => ({
+        requestId: Number(r.request_id),
+        userId: Number(r.user_id),
+        username: String(r.username),
+        createdAt: String(r.created_at),
+      })),
+      outgoing: outgoingRows.map((r) => ({
+        requestId: Number(r.request_id),
+        userId: Number(r.user_id),
+        username: String(r.username),
+        createdAt: String(r.created_at),
+      })),
+    };
   }
 }

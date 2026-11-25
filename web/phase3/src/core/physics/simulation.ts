@@ -26,9 +26,12 @@ import {
   createFighter,
   getActiveAnchorDist,
   getActiveStance,
+  getEnemyLooseSlowFactor,
   getLooseOrbitRadius,
   insertRecoveredHexIntoCluster,
+  isDefenseFortressActive,
   isInsideLooseGravityField,
+  isLooseGravityFieldActive,
   isSlotKey,
 } from '../world/structure';
 import type { Fighter, GuidedSteerInput, MatchState, PlayerLoadout } from '../types';
@@ -47,6 +50,8 @@ export function createMatchState(
     player,
     enemy,
     obstacles,
+    walls: [],
+    nextWallId: 1,
     timeRemaining: MATCH_DURATION,
     hitStopTimer: 0,
     matchOver: false,
@@ -143,14 +148,13 @@ export function updateFighter(
       if (hex && hex.state === 'ORBIT') {
         launchHex(state, fighter, hex, job.angle, job.strength, job.fireMode);
       }
-      fighter.seqFireTimer = fighter.specialActive?.type === 'loose' ? 0.068 : 0.085;
+      fighter.seqFireTimer = isLooseGravityFieldActive(fighter) ? 0.068 : 0.085;
     }
   }
 
-  // Movement & Dash (Defense Fortress -40%; Opponent Loose Gravity Field -80%)
-  const inEnemyGravity = isInsideLooseGravityField(opponent, fighter.x, fighter.y, PLAYER_RADIUS * 0.5);
-  const bodySlowMult = inEnemyGravity ? LOOSE_GRAVITY_SLOW_FACTOR : 1.0;
-  const moveMult = (fighter.specialActive?.type === 'defense' ? 0.60 : 1.0) * bodySlowMult;
+  // Movement & Dash (Defense Fortress -40%; Opponent Gravity -80% or Prism Web -40%)
+  const bodySlowMult = getEnemyLooseSlowFactor(opponent, fighter.x, fighter.y, PLAYER_RADIUS * 0.5);
+  const moveMult = (isDefenseFortressActive(fighter) ? 0.60 : 1.0) * bodySlowMult;
   if (fighter.dashTimer > 0) {
     fighter.dashTimer = Math.max(0, fighter.dashTimer - dt);
     fighter.x += fighter.dashVx * bodySlowMult * dt;
@@ -209,6 +213,32 @@ export function updateFighter(
             ph.state === 'STOLEN_FLOOR' ? 0.50 : owner.rotMode === 'normal' ? 0.55 : 0.45;
           damageFighterBody(state, dmgSource, ph, fighter, contactMult);
           ph.hitCooldown = 0.45;
+        }
+      }
+    }
+  }
+
+  // Solid physical barrier collision with Summoned Hex Walls (blocks BOTH fighters!)
+  const wallR = BASE_HEX_RADIUS * 0.92;
+  const minWD = PLAYER_RADIUS + wallR;
+  for (const w of state.walls) {
+    for (const wh of w.hexes) {
+      if (wh.broken) continue;
+      const wdx = fighter.x - wh.x;
+      const wdy = fighter.y - wh.y;
+      const wd = Math.hypot(wdx, wdy);
+      if (wd < minWD) {
+        const nx = wd > 1e-4 ? wdx / wd : Math.cos(fighter.facing + Math.PI);
+        const ny = wd > 1e-4 ? wdy / wd : Math.sin(fighter.facing + Math.PI);
+        const push = minWD - wd;
+        fighter.x += nx * push;
+        fighter.y += ny * push;
+        if (fighter.dashTimer > 0) {
+          const dashDot = fighter.dashVx * nx + fighter.dashVy * ny;
+          if (dashDot < 0) {
+            fighter.dashVx -= dashDot * nx;
+            fighter.dashVy -= dashDot * ny;
+          }
         }
       }
     }
@@ -626,7 +656,7 @@ export function updateFighter(
         if (h.trail.length > 10) h.trail.shift();
       }
     } else if (h.state === 'ORBIT') {
-      const isLooseOverdrive = fighter.specialActive?.type === 'loose';
+      const isLooseOverdrive = isLooseGravityFieldActive(fighter);
       const orbitSlow = isInsideLooseGravityField(opponent, h.x, h.y, R * 0.85) ? LOOSE_GRAVITY_SLOW_FACTOR : 1.0;
       const orbitSpeed = 1.65 * Math.pow(fighter.currentScale, -0.35) * (isLooseOverdrive ? 1.30 : 1.0) * orbitSlow;
       h.orbitAngle += dt * orbitSpeed;
@@ -757,7 +787,7 @@ export function updateFighter(
       const dx = fighter.x - h.x;
       const dy = fighter.y - h.y;
       const d = Math.hypot(dx, dy);
-      const looseOverdrive = fighter.specialActive?.type === 'loose' ? 1.30 : 1.0;
+      const looseOverdrive = isLooseGravityFieldActive(fighter) ? 1.30 : 1.0;
       let recallSpeed: number;
       if (h.isAutoReturning) {
         recallSpeed = (h.launchSpeed || 560) * 2.0;
@@ -863,6 +893,19 @@ export function stepSimulation(
   }
 
   if (aiTick) aiTick(state, dt);
+
+  for (let i = state.walls.length - 1; i >= 0; i--) {
+    const w = state.walls[i];
+    w.timer -= dt;
+    let anyIntact = false;
+    for (const wh of w.hexes) {
+      if (wh.flashTimer > 0) wh.flashTimer = Math.max(0, wh.flashTimer - dt);
+      if (!wh.broken) anyIntact = true;
+    }
+    if (w.timer <= 0 || !anyIntact) {
+      state.walls.splice(i, 1);
+    }
+  }
 
   updateFighter(state, state.player, state.enemy, dt, guidedInput);
   updateFighter(state, state.enemy, state.player, dt, enemyGuidedInput);
