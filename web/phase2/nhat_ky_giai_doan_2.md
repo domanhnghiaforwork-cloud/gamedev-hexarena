@@ -168,6 +168,29 @@ Tài liệu ghi nhận quá trình phát triển nhánh **Giai đoạn 2** trong
   * Sửa lỗi thống kê `hexBroken` của người chơi Khách trong PvP và lọc sự kiện `toast` / `haptic` theo đúng `target` chỗ ngồi để hai bên không nhận nhầm thông báo của nhau.
   * Bổ sung giới hạn số lượng hạt/sóng xung kích/chữ nổi trong `VFXManager` giữ mượt `60fps` trên máy yếu và thêm nhịp tim WebSocket (`ping/pong` 25s) dọn socket treo khi Safari chuyển nền.
 
+---
+
+## v2.12 — 25/11/2026: Nâng cấp Bot AI Chiến thuật Khắc chế & Phản công Thông minh
+* **Bỏ lối đánh "bắt chước" người chơi (`src/ai/botController.ts`):**
+  * **Khắc chế theo trạng thái & Ulti:** Khi bạn bật **Pháo Đài**, Bot lập tức né tầm nổ (`> 275px`), chuyển sang Đánh xa xuyên giáp hoặc Đơn lẻ vòng sườn thay vì bật khiên bắt chước hay bắn thẳng vào mặt khiên. Khi bạn bật **Phản Chém Tước Mảnh**, Bot giữ khoảng cách thả diều tầm xa thay vì đấu chém cận chiến. Khi bạn phóng **Ngự Thương**, Bot rình cơ hội áp sát đánh vào thân nếu thương vừa bay xa.
+  * **Né Lướt vuông góc thực tế:** Tự phát hiện đường đạn / Ngự Thương đang lao tới trong tầm `< 185px` và Lướt vuông góc về phía thoáng nhất (tránh vách tường & vật cản).
+  * **Bắn đón hướng, nghiêng khiên trượt đòn & bẫy kìm Cắm-Thu:** Dự đoán hướng chạy của bạn khi bắn, tự nghiêng khiên `±38°` để làm trượt đòn địch, kích hoạt **Thu hồi cắt qua người** ngay khi bạn đứng giữa đường bay về của mảnh đã cắm.
+* **Bot biết lái Ngự Thương Độc Lập (`src/core/simulation.ts`):**
+  * Cho phép Bot điều hướng mũi Ngự Thương qua `issueGuidedWaypoint` vòng ra sau lưng khiên hoặc tránh vật cản.
+* **Kiểm thử AI (`tests/botAI.test.ts`):** Bổ sung 5 bài test xác minh Bot khắc chế Ulti, không bắt chước Phòng thủ, bẫy cắt Thu hồi và Lướt né vuông góc.
+
+---
+
+## v2.13 — 25/11/2026: Nâng cấp Ulti Đơn lẻ thành Trường Trọng Lực
+* **Mở rộng vùng & Hiệu ứng làm chậm -50% (`src/core/structure.ts`, `src/core/simulation.ts`, `src/net/pvpInterpolator.ts`):**
+  * Kỹ năng đặc biệt Đơn lẻ (**Trường Trọng Lực**) tạo vùng trọng lực từ mép thân nhân vật ra tới bán kính mở rộng **+30%** so với vòng ngoài cũ (`getLooseGravityFieldRadius`).
+  * Mọi thực thể vật lý của địch khi đi vào vùng này (thân nhân vật đang chạy/Lướt, mảnh đơn lẻ quay/phóng/thu hồi/bị cướp bay, Ngự Thương phóng/điều hướng/nảy/thu về, kiếm cận chiến chém vào trường) đều bị giảm **50% tốc độ** (`LOOSE_GRAVITY_SLOW_FACTOR = 0.50`).
+  * Các mảnh đơn lẻ đang quay (`ORBIT`) của người thi triển được giữ ở quỹ đạo giữa của Trường Trọng Lực (`getLooseOrbitRadius = (PLAYER_RADIUS + fieldR) / 2`).
+* **Hiển thị & Bot AI (`src/render/entityRenderer.ts`, `src/render/renderer.ts`, `src/ai/botController.ts`):**
+  * Vẽ Trường Trọng Lực bằng vùng tỏa năng lượng xanh lam, gợn sóng hút vào trong, vòng chỉ dẫn quỹ đạo giữa và viền làm chậm quanh mục tiêu địch bị dính trường.
+  * Cập nhật Bot AI giữ khoảng cách an toàn ngoài rìa Trường Trọng Lực khi người chơi kích hoạt và chủ động bật khi địch áp sát trong tầm bẫy.
+* **Kiểm thử (`tests/physics.test.ts`):** Bổ sung unit test cho bán kính mở rộng +30%, quỹ đạo giữa trường và giảm 50% tốc độ địch / đạn / Ngự Thương / chém cận chiến.
+
 
 
 

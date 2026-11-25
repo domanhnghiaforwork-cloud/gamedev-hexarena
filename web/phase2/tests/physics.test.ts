@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   ANCHOR_BONUS,
+  BASE_HEX_RADIUS,
   createDefaultLoadout,
   FIXED_DT,
   HEX_HP_MULTIPLIER,
   MATERIALS,
+  PLAYER_RADIUS,
 } from '@core/constants';
 import { applyHexDurabilityLoss, computeEffectiveImpactAngle, damageHex, isBodyShieldedAlongPath } from '@core/combat';
 import { createMatchState, stepSimulation } from '@core/simulation';
@@ -18,6 +20,8 @@ import {
 } from '@core/skills';
 import {
   getEffectiveHexStats,
+  getLooseGravityFieldRadius,
+  getLooseOrbitRadius,
   getStructuralResistance,
   insertRecoveredHexIntoCluster,
   runStructuralBFSAndReassemble,
@@ -218,5 +222,164 @@ describe('Power-Law Scaling & 4-Rule Emergent Physics', () => {
     expect(passedWaypoint).toBe(true);
     expect(anim.hasCmd).toBe(false);
     expect(maxSpeedDrop).toBeLessThan(15); // Constant full guidedSpeed (zero arrival braking!)
+  });
+
+  it('expands Loose Gravity Field +30%, places orbit hexes at midpoint, and slows enemy entities by 50%', () => {
+    const idleInput = {
+      mode: 'desktop' as const,
+      touchHoldingAttack: false,
+      touchAimAngle: 0,
+      touchAimStrength: 0,
+      desktopHoldingGuided: false,
+    };
+
+    // 1. Field radius (+30% over old 1.2x loose ring) & midpoint orbit radius
+    const state = createMatchState();
+    const { player } = state;
+    setFighterForm(state, player, 'loose');
+    for (let i = 0; i < 30; i++) stepSimulation(state, FIXED_DT, idleInput);
+
+    expect(triggerFighterSpecial(state, player)).toBe(true);
+    expect(player.specialActive?.type).toBe('loose');
+
+    const prevLooseRing = (PLAYER_RADIUS + 24 + BASE_HEX_RADIUS * player.currentScale * 1.15) * 1.20;
+    const fieldR = getLooseGravityFieldRadius(player);
+    const expectedMidOrbit = (PLAYER_RADIUS + fieldR) * 0.5;
+    expect(fieldR).toBeCloseTo(prevLooseRing * 1.30, 4);
+    expect(getLooseOrbitRadius(player)).toBeCloseTo(expectedMidOrbit, 4);
+
+    // Let loose hexes settle onto the midpoint orbit
+    for (let i = 0; i < 45; i++) stepSimulation(state, FIXED_DT, idleInput);
+    const orbitHex = player.hexes.find((h) => h.state === 'ORBIT');
+    expect(orbitHex).toBeDefined();
+    const orbitDist = Math.hypot(orbitHex!.x - player.x, orbitHex!.y - player.y);
+    expect(Math.abs(orbitDist - expectedMidOrbit)).toBeLessThan(1.5);
+
+    // 2. Enemy body moves at 50% speed inside the Gravity Field
+    const outsideState = createMatchState();
+    outsideState.obstacles = [];
+    outsideState.player.x = -360;
+    outsideState.player.y = 0;
+    outsideState.enemy.x = 200;
+    outsideState.enemy.y = 0;
+    outsideState.enemy.vx = 0;
+    outsideState.enemy.vy = 200;
+    const outStartY = outsideState.enemy.y;
+    stepSimulation(outsideState, FIXED_DT, idleInput);
+    const outDisp = Math.abs(outsideState.enemy.y - outStartY);
+
+    const insideState = createMatchState();
+    insideState.obstacles = [];
+    insideState.player.x = 0;
+    insideState.player.y = 0;
+    setFighterForm(insideState, insideState.player, 'loose');
+    expect(triggerFighterSpecial(insideState, insideState.player)).toBe(true);
+    for (const h of insideState.player.hexes) {
+      h.state = 'PLANTED';
+      h.x = -300;
+      h.y = -300;
+    }
+    insideState.enemy.x = 80; // inside fieldR (~117px)
+    insideState.enemy.y = 0;
+    insideState.enemy.vx = 0;
+    insideState.enemy.vy = 200;
+    const inStartY = insideState.enemy.y;
+    stepSimulation(insideState, FIXED_DT, idleInput);
+    const inDisp = Math.abs(insideState.enemy.y - inStartY);
+    expect(inDisp / outDisp).toBeCloseTo(0.5, 2);
+
+    // 3. Enemy LAUNCHED hex flies at 50% speed inside the Gravity Field
+    const projState = createMatchState();
+    projState.obstacles = [];
+    projState.player.x = 0;
+    projState.player.y = 0;
+    setFighterForm(projState, projState.player, 'loose');
+    expect(triggerFighterSpecial(projState, projState.player)).toBe(true);
+
+    projState.enemy.x = 300;
+    projState.enemy.y = 0;
+    setFighterForm(projState, projState.enemy, 'loose');
+    for (let i = 0; i < 30; i++) stepSimulation(projState, FIXED_DT, idleInput);
+
+    const testHex = projState.enemy.hexes.find((h) => h.state === 'ORBIT')!;
+    testHex.state = 'LAUNCHED';
+    testHex.x = 40;
+    testHex.y = 0;
+    testHex.vx = 600;
+    testHex.vy = 0;
+    testHex.remainingDist = 400;
+    testHex.targetX = 440;
+    testHex.targetY = 0;
+    testHex.hasBounced = true;
+    const prevHexX = testHex.x;
+    stepSimulation(projState, FIXED_DT, idleInput);
+    expect(testHex.x - prevHexX).toBeCloseTo(600 * 0.5 * FIXED_DT, 2);
+
+    // 4. Enemy melee swing advances at 50% speed when inside the Gravity Field
+    const meleeOut = createMatchState();
+    meleeOut.obstacles = [];
+    meleeOut.player.x = -380;
+    meleeOut.player.y = 0;
+    meleeOut.enemy.x = 0;
+    meleeOut.enemy.y = 0;
+    setFighterForm(meleeOut, meleeOut.enemy, 'slot2'); // melee
+    executeFighterAttack(meleeOut, meleeOut.enemy, 0);
+    stepSimulation(meleeOut, FIXED_DT, idleInput);
+    const normalTimer = meleeOut.enemy.attackAnim?.timer ?? 0;
+
+    const meleeIn = createMatchState();
+    meleeIn.obstacles = [];
+    meleeIn.player.x = 0;
+    meleeIn.player.y = 0;
+    setFighterForm(meleeIn, meleeIn.player, 'loose');
+    expect(triggerFighterSpecial(meleeIn, meleeIn.player)).toBe(true);
+    meleeIn.enemy.x = 50;
+    meleeIn.enemy.y = 0;
+    setFighterForm(meleeIn, meleeIn.enemy, 'slot2');
+    executeFighterAttack(meleeIn, meleeIn.enemy, 0);
+    stepSimulation(meleeIn, FIXED_DT, idleInput);
+    const slowedTimer = meleeIn.enemy.attackAnim?.timer ?? 0;
+    expect(slowedTimer / normalTimer).toBeCloseTo(0.5, 2);
+
+    // 5. Enemy ranged spear advances at 50% speed inside the Gravity Field
+    const spearOut = createMatchState();
+    spearOut.obstacles = [];
+    spearOut.player.x = -380;
+    spearOut.player.y = 0;
+    spearOut.enemy.x = 0;
+    spearOut.enemy.y = 0;
+    setFighterForm(spearOut, spearOut.enemy, 'slot1');
+    for (let i = 0; i < 30; i++) stepSimulation(spearOut, FIXED_DT, idleInput);
+    executeFighterAttack(spearOut, spearOut.enemy, 0);
+    expect(spearOut.enemy.attackAnim?.type).toBe('ranged');
+    const outAnim = spearOut.enemy.attackAnim!;
+    if (outAnim.type !== 'ranged') throw new Error('Expected ranged');
+    const outSpearStartX = outAnim.anchorX;
+    stepSimulation(spearOut, FIXED_DT, idleInput);
+    const outSpearStep = Math.hypot(outAnim.anchorX - outSpearStartX, outAnim.anchorY);
+
+    const spearIn = createMatchState();
+    spearIn.obstacles = [];
+    spearIn.player.x = 0;
+    spearIn.player.y = 0;
+    setFighterForm(spearIn, spearIn.player, 'loose');
+    expect(triggerFighterSpecial(spearIn, spearIn.player)).toBe(true);
+    for (const h of spearIn.player.hexes) {
+      h.state = 'PLANTED';
+      h.x = -300;
+      h.y = -300;
+    }
+    spearIn.enemy.x = -110; // no body overlap with player (0,0), anchor spawns ~ -60 inside fieldR (~117)
+    spearIn.enemy.y = 0;
+    setFighterForm(spearIn, spearIn.enemy, 'slot1');
+    for (let i = 0; i < 30; i++) stepSimulation(spearIn, FIXED_DT, idleInput);
+    executeFighterAttack(spearIn, spearIn.enemy, 0);
+    expect(spearIn.enemy.attackAnim?.type).toBe('ranged');
+    const inAnim = spearIn.enemy.attackAnim!;
+    if (inAnim.type !== 'ranged') throw new Error('Expected ranged');
+    const inSpearStartX = inAnim.anchorX;
+    stepSimulation(spearIn, FIXED_DT, idleInput);
+    const inSpearStep = Math.hypot(inAnim.anchorX - inSpearStartX, inAnim.anchorY);
+    expect(inSpearStep / outSpearStep).toBeCloseTo(0.5, 2);
   });
 });

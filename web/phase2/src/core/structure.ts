@@ -209,6 +209,28 @@ export function getEffectiveHexStats(fighter: Fighter, hex: HexEntity): Effectiv
   };
 }
 
+export const LOOSE_GRAVITY_SLOW_FACTOR = 0.50;
+
+export function getLooseGravityFieldRadius(fighter: Fighter): number {
+  const currentLooseRing = (PLAYER_RADIUS + 24 + BASE_HEX_RADIUS * fighter.currentScale * 1.15) * 1.20;
+  return currentLooseRing * 1.30;
+}
+
+export function getLooseOrbitRadius(fighter: Fighter): number {
+  const fieldR = getLooseGravityFieldRadius(fighter);
+  return (PLAYER_RADIUS + fieldR) * 0.5;
+}
+
+export function isInsideLooseGravityField(
+  caster: Fighter,
+  x: number,
+  y: number,
+  entityRadius = 0
+): boolean {
+  if (caster.specialActive?.type !== 'loose') return false;
+  return dist(caster.x, caster.y, x, y) <= getLooseGravityFieldRadius(caster) + entityRadius;
+}
+
 export function isHexStolen(hex: HexEntity): boolean {
   return hex.state === 'STOLEN_FLY' || hex.state === 'STOLEN_FLOOR' || hex.state === 'STOLEN_RETURN';
 }

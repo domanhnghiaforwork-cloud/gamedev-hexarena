@@ -75,12 +75,12 @@ export interface SpecialSkillMeta {
 export const SPECIAL_SKILLS: Record<SpecialSkillKey, SpecialSkillMeta> = {
   loose: {
     key: 'loose',
-    name: 'Quá Tải Ly Tâm',
-    short: 'LY TÂM',
+    name: 'Trường Trọng Lực',
+    short: 'TRỌNG LỰC',
     dur: 8.0,
     cd: 18.0,
     color: '#38bdf8',
-    desc: '+30% tốc quay/phóng/thu, mở rộng vòng quỹ đạo +20% thành bánh đà cưa gây sát thương & tăng góc lệch đạn +22°.',
+    desc: 'Mở trường trọng lực rộng hơn vòng ngoài +30%: làm chậm 50% mọi thực thể vật lý của địch bên trong, giữ mảnh quay ở quỹ đạo giữa trường và tăng +30% tốc quay/phóng/thu.',
   },
   melee: {
     key: 'melee',

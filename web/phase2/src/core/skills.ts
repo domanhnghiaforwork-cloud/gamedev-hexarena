@@ -228,7 +228,7 @@ export function triggerFighterSpecial(
       type: 'floatingText',
       x: fighter.x,
       y: fighter.y - 36,
-      text: 'QUÁ TẢI LY TÂM!',
+      text: 'TRƯỜNG TRỌNG LỰC!',
       color: cfg.color,
       scale: 1.05,
     });

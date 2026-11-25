@@ -5,8 +5,10 @@ import type { MatchState } from '@core/types';
 import type { LiveInputState } from '@input/inputManager';
 import type { MobileWidgetId, PCControlConfig } from '@storage/profiles';
 import { getViewportSize } from '@ui/fullscreen';
+import { PLAYER_RADIUS } from '@core/constants';
+import { isInsideLooseGravityField } from '@core/structure';
 import { renderArena } from './arenaRenderer';
-import { renderFighterBody, renderFighterHexLayer } from './entityRenderer';
+import { renderFighterBody, renderFighterHexLayer, renderGravityField } from './entityRenderer';
 import { renderDesktopCanvasHUD, renderMobileCanvasHUD } from './hudRenderer';
 import { renderDesktopReticle, renderSkillIndicator } from './indicatorRenderer';
 import { VFXManager } from './vfxRenderer';
@@ -89,6 +91,10 @@ export class GameRenderer {
 
     renderArena(ctx, state.obstacles);
 
+    // Loose Gravity Fields beneath fighters & hexes
+    renderGravityField(ctx, state.enemy, nowSec);
+    renderGravityField(ctx, state.player, nowSec);
+
     // Skill Indicator under fighters
     renderSkillIndicator(ctx, state.player, live.cancelHovered);
 
@@ -104,8 +110,20 @@ export class GameRenderer {
     renderFighterHexLayer(ctx, state.player, false, nowSec, hoverPlantedId);
 
     // Fighter Bodies
-    renderFighterBody(ctx, state.enemy, nowSec);
-    renderFighterBody(ctx, state.player, nowSec);
+    const enemyInGravity = isInsideLooseGravityField(
+      state.player,
+      state.enemy.x,
+      state.enemy.y,
+      PLAYER_RADIUS * 0.5
+    );
+    const playerInGravity = isInsideLooseGravityField(
+      state.enemy,
+      state.player.x,
+      state.player.y,
+      PLAYER_RADIUS * 0.5
+    );
+    renderFighterBody(ctx, state.enemy, nowSec, enemyInGravity);
+    renderFighterBody(ctx, state.player, nowSec, playerInGravity);
 
     // High-flight recalling hexes (over obstacles & fighters)
     renderFighterHexLayer(ctx, state.enemy, true, nowSec);

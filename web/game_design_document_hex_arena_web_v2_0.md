@@ -182,43 +182,29 @@ $$S = \frac{\text{Tỷ lệ thu phóng (\%)}}{100}, \qquad \text{Chỉ số hi�
 | **Điều khiển & Trải nghiệm Di động** (`input/`) | Pointer Events API + Fullscreen API + Screen Orientation API (`landscape`) | Hỗ trợ 4+ ngón đồng thời không xung đột, chặn thao tác phóng to/cuộn trang mặc định của trình duyệt, xử lý tốt thanh địa chỉ trên iOS Safari & Chrome Android. |
 | **Âm thanh & Rung** (`feedback/`) | Web Audio API (Procedural Synth + bộ âm thanh ngắn nén `.ogg/.mp3`) + Vibration API | Khởi tạo AudioContext ngay ở cú chạm đầu tiên để vượt chính sách chặn tự phát âm thanh trên mobile. |
 | **Đóng gói & Phân phối** | Vite + **PWA** (`manifest.json` + Service Worker) | Cho phép người chơi "Thêm vào màn hình chính" để chạy toàn màn hình không thanh URL và hỗ trợ chơi với Bot ngay cả khi offline. |
-| **Mạng PvP Trực tuyến** *(Giai đoạn 4)* | Node.js / Bun Authoritative Server + WebSockets (hoặc WebRTC DataChannel qua Geckos.io) | Đồng bộ trạng thái ở tần số $20\text{--}30\text{ Hz}$ (tick rate) kèm nội suy (interpolation) phía client để xử lý độ trễ mạng di động 4G/5G. |
+| **Mạng PvP Trực tuyến** *(Giai đoạn 2 — Đã hoàn thành)* | Node.js Authoritative Server (`60Hz`) + WebSockets (`ws`) + SQLite (`node:sqlite`) | Đồng bộ trạng thái authoritative `60Hz` (`TCP_NODELAY`), Client-side Prediction + Reconciliation và Adaptive Timeline Interpolation để xử lý mượt độ trễ mạng di động 4G/5G. |
 
 ---
 
-### 9.2. Lộ trình Phát triển Nhánh Web (4 Giai đoạn)
+### 9.2. Lộ trình Phát triển Nhánh Web (2 Giai đoạn đã hoàn thành)
 
-#### Giai đoạn 1: Core Web Prototype — Bản chơi thử 1 File *(Đã hoàn thiện nền tảng: `hex_arena.html`)*
-* **Phạm vi:**
-  * Đấu trường lục giác 2.5D nền trung tính, 4 trụ vật cản, nhân vật khối cầu kèm Vòng tròn Hitbox chân.
-  * Đủ 4 chất liệu mảnh, hệ thống khóa cạnh đồng bộ khi co giãn 3 nấc ($60\%/100\%/150\%$), 3 chế độ Xoay trục, Vòng cung lia tay 1–7 + 3 chế độ phóng + Thu hồi bay cao.
-  * Vỡ mảnh, tự động tái hợp nhất BFS, tự hồi phục nguyên trạng và Bot AI 1v1 cơ bản.
-  * Chế độ Toàn màn hình & điều khiển 4 ngón trên mobile + phím tắt Desktop.
-* **Mục tiêu kiểm chứng (Playtest nội bộ):**
-  * Test trực tiếp trên điện thoại thực tế (Android & iOS) để đánh giá cảm giác bấm 4 ngón, độ nhạy lia tay trên Vòng cung và độ dễ đọc khi 14 mảnh giao tranh cùng lúc.
-  * Tinh chỉnh hệ số nhạy tốc độ ($k_V = -0.5$), khoảng cách neo vũ khí và thời gian hồi mảnh ($5\text{s}$).
+#### Giai đoạn 1: Core Web Prototype — Bản chơi thử 1 File *(Đã hoàn thành: `web/phase1/hex_arena_web_prototype_v1.html`, `v1.0 → v1.16`)*
+* **Nội dung đã hoàn thiện:**
+  * Đấu trường lục giác 2.5D nền trung tính (`ARENA_RADIUS = 686`), sinh ngẫu nhiên 3–5 vật cản (lục giác / vuông / chữ nhật) kèm kiểm tra cắt đoạn chống bắn/chém/lướt xuyên tường (Cyrus-Beck).
+  * Bộ 7 mảnh mặc định với đủ 4 chất liệu (ngân sách 400 điểm), 3 trạng thái chiến đấu tổng quát (**Đánh xa**, **Đánh gần**, **Phòng thủ**), hệ thống khóa cạnh đồng bộ khi co giãn 3 nấc ($60\%/100\%/150\%$) theo hàm lũy thừa $S^k$.
+  * Trạng thái **Đơn lẻ** với 3 chế độ Xoay trục (*Tĩnh / Pháp tuyến / Ngẫu nhiên*), Vòng cung chọn mảnh 1–7 hỗ trợ lia tay, 3 chế độ phóng (*Cắm & Thu Xayah / Lần lượt / Đồng loạt*) và Thu hồi bay cao vượt vật cản.
+  * Hệ thống **4 Quy tắc Vật lý Va chạm & Phòng thủ (Emergent Physics)**, độ bền `2.2×`, tự hồi HP chậm, hiệu ứng nứt vàng hổ phách 3 cấp độ, vỡ mảnh (`5s`), tự động tái hợp nhất BFS từ mảnh Gốc neo và tự hồi phục nguyên trạng.
+  * Kỹ năng **Lướt** (`3.5s`), cơ chế hủy chiêu bằng vùng `✕ HỦY`, và **4 Kỹ năng Đặc biệt** `8.0s` (*Quá Tải Ly Tâm*, *Phản Chém Tước Mảnh*, *Ngự Thương Độc Lập* click chỉ điểm, *Pháo Đài Phản Xung*).
+  * Hỗ trợ điều khiển 4 ngón trên Mobile + phím tắt Desktop, Bot AI 1v1 cơ bản, âm thanh Web Audio tổng hợp & phản hồi rung Haptic.
 
-#### Giai đoạn 2: Tái cấu trúc Mô-đun & Trình Lắp ráp Cấu hình (Modular Core & Preset Editor)
-* **Phạm vi:**
-  * Tách mã nguồn từ 1 file đơn sang dự án mô-đun (Vite + TypeScript/JS) với kiến trúc tách biệt `core/` (vật lý bước thời gian cố định — *fixed timestep 60Hz*), `ai/`, `render/` và `ui/`.
-  * Xây dựng **Màn hình Lắp ráp trước trận (Hex Loadout & Preset Editor):** Cho phép người chơi chọn số lượng 5–10 mảnh, chọn chất liệu từng mảnh, kéo thả tự do lên lưới lục giác $(q, r)$ để tự tạo cấu hình vũ khí riêng, chọn **Mảnh Gốc neo (Root)**, gán kích thước **Smart Default** và lưu vào `localStorage`.
-  * Bổ sung **Trình tùy chỉnh HUD (Custom HUD Editor):** Kéo thả vị trí, chỉnh cỡ nút và độ trong suốt cho người chơi 2 ngón / 3 ngón / 4 ngón.
-* **Mục tiêu kiểm chứng:** Kiểm tra độ sâu chiến thuật khi người chơi tự chế vũ khí dị (ví dụ: Giáo 2 mũi, Khiên tổ ong siêu dày, bộ 10 mảnh nhẹ chuyên đánh Xayah) và đảm bảo thuật toán BFS không gặp lỗi biên với mọi hình dạng tự vẽ.
-
-#### Giai đoạn 3: Tối ưu Di động (PWA), Đồ họa & Cảm giác đánh (Polish & Performance)
-* **Phạm vi:**
-  * Đóng gói **PWA** hoàn chỉnh (biểu tượng ứng dụng, màn hình chờ, chế độ hiển thị `fullscreen` / `standalone`, lưu cache offline để chơi với Bot mọi lúc).
-  * Nâng cấp hiệu ứng thị giác & âm thanh: vệt chém mịn hơn, hiệu ứng ánh sáng xung kích khi các cạnh khóa khớp, nâng cấp Bot AI biết đọc bài (né đòn thu nhỏ, chủ động phá mảnh giữa thân giáo).
-  * **Đánh giá nhánh nâng cấp WebGL (Tùy chọn):** Nếu cần độ sâu 3D thật (xoay trục 3D tự nhiên cho chế độ Xoay ngẫu nhiên và ánh sáng Neon Bloom), triển khai tầng `render-threejs/` thay thế `render-canvas2d/` mà giữ nguyên 100% tầng `core/`.
-  * Tối ưu hiệu năng: Object Pooling cho hạt hiệu ứng (particles/sparks) để triệt tiêu khựng rác bộ nhớ (GC stutter) trên trình duyệt di động.
-* **Mục tiêu kiểm chứng:** Đạt mượt ổn định $60\text{ FPS}$ liên tục trong 10 phút đấu trên thiết bị di động tầm trung, không tụt khung hình khi 20 mảnh nổ vỡ liên tiếp.
-
-#### Giai đoạn 4: Đối kháng Trực tuyến 1v1 (Online PvP & Balancing)
-* **Phạm vi:**
-  * Triển khai máy chủ phòng đấu nhẹ (**Room Code 1v1** — tạo phòng gửi link mời bạn bè vào đánh ngay trên trình duyệt, sau đó mở rộng sang Ghép trận tự động).
-  * Chạy tầng `core/` ở phía Server (Authoritative Physics) để chống gian lận thông số mảnh và đồng bộ chính xác kết quả va chạm / vỡ mảnh.
-  * Áp dụng Client-side Prediction cho chuyển động nhân vật & dự đoán tung đòn, kết hợp Entity Interpolation mượt mà cho 10 mảnh của đối thủ.
-  * Thu thập dữ liệu trận đấu thực tế (Telemetry): thời lượng trung bình mỗi trận, tỷ lệ thắng của từng cấu hình/chất liệu để cân bằng lại ngân sách điểm, hệ số $k$, cơ chế đánh đổi năng lượng xoay và quyết định có bổ sung **cơ chế chống câu giờ (Anti-Stall)** hay không.
+#### Giai đoạn 2: Kiến trúc Mô-đun, Tùy biến Tự do, Bot Thông minh & PvP 1v1 Trực tuyến *(Đã hoàn thành: `web/phase2/`, `v2.0 → v2.13`)*
+* **Nội dung đã hoàn thiện:**
+  * **Kiến trúc Mô-đun Độc lập & Bộ Kiểm thử Tự động:** Tách 100% lõi mô phỏng vật lý sang TypeScript thuần (`src/core/` chạy Fixed Timestep `60Hz`), phân tách rõ `ai/`, `render/`, `input/`, `ui/`, `net/`, `storage/` và `server/`, đi kèm hệ thống unit test Vitest (**29/29 test** qua 6 bộ kiểm thử).
+  * **Tách `WeaponBlueprint` khỏi `CombatStance` & Xưởng Vũ Khí toàn màn hình:** Hỗ trợ bộ tài nguyên chung `5–10` mảnh tùy chọn chất liệu từng mảnh; kéo thả tự do lên lưới tổ ong `(q, r)` lấp đầy 100% khung hình, chọn Mảnh Gốc neo, `Smart Default`, kiểm tra BFS thời gian thực, xem trước 5 chỉ số tự phát sinh và lưu 3 ô cấu hình.
+  * **Sảnh chờ Hiện đại & Tài khoản SQLite:** Giao diện Sảnh cân đối 2 khối (`Kho vũ khí` / `Vào trận`) với 4 dòng kho đồ + mini-canvas; tích hợp `node:sqlite` (`scrypt + salt`) lưu tài khoản, bộ vũ khí và đồng bộ cấu hình phím Mobile/PC đa thiết bị.
+  * **Tối ưu Toàn diện Mobile/iOS & Tùy chỉnh Điều khiển Song song:** Hỗ trợ **Toàn màn hình** (tự xoay ngang Android + **Chế độ tập trung iOS** kèm hướng dẫn PWA `manifest.webmanifest`, đọc chuẩn `safe-area-inset` tai thỏ); thiết kế mặc định **HUD 2 Ngón v2** chống bấm nhầm đa kích cỡ màn hình; hỗ trợ kéo thanh công cụ & xoay góc cụm phím (`↻`), gán lại 15 phím tắt PC và cân bằng Ngự Thương `bay xuyên qua` giữa Mobile và PC.
+  * **Đối kháng Trực tuyến PvP 1v1 Authoritative `60Hz`:** Máy chủ WebSocket (`server/index.ts`) dùng chung `100%` tầng `src/core/`, hỗ trợ mã phòng 4 ký tự, link mời trực tiếp, quy trình phòng đấu (**Chọn số mảnh 5–10 → Sẵn sàng → Tinh chỉnh 1 phút → Đếm ngược 3-2-1-CHIẾN! → Tái đấu**); tối ưu độ mượt bằng `TCP_NODELAY`, Client-side Prediction + Reconciliation, Adaptive Timeline Interpolation, heartbeat chống treo socket và đo Ping trực tiếp.
+  * **Hoàn thiện Chiến thuật, Bot AI Khắc chế & Ulti Trường Trọng Lực:** Chuẩn hóa Phòng thủ thuần che chắn (chỉ *Pháo Đài Phản Xung* gây sát thương); nâng cấp **Bot AI khắc chế & phản công thông minh** (bỏ bắt chước người chơi, tự lướt né vuông góc, nghiêng khiên trượt đòn, bẫy kìm Cắm-Thu, tự lái Ngự Thương); và cải tiến Ulti Đơn lẻ thành **Trường Trọng Lực** mở rộng vùng `+30%`, làm chậm `-50%` mọi thực thể vật lý của địch bên trong trong khi giữ các mảnh quay ở quỹ đạo giữa.
 
 ---
 

@@ -1,10 +1,67 @@
 import { AXIAL_DIRS, BASE_HEX_RADIUS, PLAYER_RADIUS } from '@core/constants';
 import { axialKey, axialToLocal, clamp } from '@core/hexMath';
-import { getActiveStance, isHexStolen } from '@core/structure';
+import {
+  getActiveStance,
+  getLooseGravityFieldRadius,
+  getLooseOrbitRadius,
+  isHexStolen,
+} from '@core/structure';
 import type { Fighter, HexEntity } from '@core/types';
 import { drawHexPolygon } from './arenaRenderer';
 
-export function renderFighterBody(ctx: CanvasRenderingContext2D, f: Fighter, nowSec: number): void {
+export function renderGravityField(ctx: CanvasRenderingContext2D, f: Fighter, nowSec: number): void {
+  if (f.specialActive?.type !== 'loose') return;
+  const fieldR = getLooseGravityFieldRadius(f);
+  const orbitR = getLooseOrbitRadius(f);
+
+  ctx.save();
+  // Gravity well gradient fill spanning from fighter body edge to expanded outer boundary (+30%)
+  const grad = ctx.createRadialGradient(f.x, f.y, PLAYER_RADIUS * 0.9, f.x, f.y, fieldR);
+  grad.addColorStop(0, 'rgba(56, 189, 248, 0.05)');
+  grad.addColorStop(0.55, 'rgba(56, 189, 248, 0.14)');
+  grad.addColorStop(0.92, 'rgba(14, 165, 233, 0.22)');
+  grad.addColorStop(1, 'rgba(56, 189, 248, 0.04)');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(f.x, f.y, fieldR, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Middle orbit guide ring where loose shards spin
+  ctx.strokeStyle = 'rgba(125, 211, 252, 0.34)';
+  ctx.lineWidth = 1.6;
+  ctx.setLineDash([7, 7]);
+  ctx.lineDashOffset = -nowSec * 65;
+  ctx.beginPath();
+  ctx.arc(f.x, f.y, orbitR, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Outer gravity boundary ring (-50% enemy physical entity speed zone)
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.65)';
+  ctx.lineWidth = 2.6;
+  ctx.setLineDash([14, 8]);
+  ctx.lineDashOffset = nowSec * 48;
+  ctx.beginPath();
+  ctx.arc(f.x, f.y, fieldR, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Subtle inward gravity ripple pulse
+  const pulseT = (nowSec * 0.75) % 1;
+  const pulseR = fieldR - (fieldR - PLAYER_RADIUS) * pulseT;
+  ctx.setLineDash([]);
+  ctx.strokeStyle = `rgba(186, 230, 253, ${(1 - pulseT) * 0.26})`;
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.arc(f.x, f.y, pulseR, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+export function renderFighterBody(
+  ctx: CanvasRenderingContext2D,
+  f: Fighter,
+  nowSec: number,
+  isSlowed = false
+): void {
   const isPlayer = f.id === 'player';
   const mainColor = isPlayer ? '#38bdf8' : '#fb7185';
   const lightColor = isPlayer ? '#bae6fd' : '#fecdd3';
@@ -40,21 +97,25 @@ export function renderFighterBody(ctx: CanvasRenderingContext2D, f: Fighter, now
   ctx.arc(fx, fy, 4.2, 0, Math.PI * 2);
   ctx.fill();
 
+  // Gravity slow indicator around slowed enemy fighter
+  if (isSlowed) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.72)';
+    ctx.lineWidth = 2.5;
+    ctx.setLineDash([5, 5]);
+    ctx.lineDashOffset = nowSec * 36;
+    ctx.beginPath();
+    ctx.arc(f.x, f.y, PLAYER_RADIUS + 11, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   // Special Skill active rings around Fighter
   if (f.specialActive) {
     const sp = f.specialActive;
     const progress = clamp(sp.timer / Math.max(0.01, sp.maxTimer), 0, 1);
     if (sp.type === 'loose') {
-      const orbitR = (PLAYER_RADIUS + 24 + BASE_HEX_RADIUS * f.currentScale * 1.15) * 1.2;
-      ctx.save();
-      ctx.strokeStyle = 'rgba(56, 189, 248, 0.42)';
-      ctx.lineWidth = 2.5;
-      ctx.setLineDash([12, 8]);
-      ctx.lineDashOffset = -nowSec * 90;
-      ctx.beginPath();
-      ctx.arc(f.x, f.y, orbitR, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.restore();
+      // Gravity field & middle orbit are drawn by renderGravityField beneath entities
     } else if (sp.type === 'defense') {
       const stored = sp.storedEnergy ?? 0;
       const chargeRatio = clamp(stored / 360, 0, 1);

@@ -19,11 +19,14 @@ import {
 } from './obstacles';
 import { launchHex, setFighterForm, triggerShieldCounterPulse } from './skills';
 import {
+  LOOSE_GRAVITY_SLOW_FACTOR,
   applyBlueprintFormation,
   createFighter,
   getActiveAnchorDist,
   getActiveStance,
+  getLooseOrbitRadius,
   insertRecoveredHexIntoCluster,
+  isInsideLooseGravityField,
   isSlotKey,
 } from './structure';
 import type { Fighter, GuidedSteerInput, MatchState, PlayerLoadout } from './types';
@@ -156,12 +159,14 @@ export function updateFighter(
     }
   }
 
-  // Movement & Dash (Defense Fortress reduces move speed by -40%)
-  const moveMult = fighter.specialActive?.type === 'defense' ? 0.60 : 1.0;
+  // Movement & Dash (Defense Fortress -40%; Opponent Loose Gravity Field -50%)
+  const inEnemyGravity = isInsideLooseGravityField(opponent, fighter.x, fighter.y, PLAYER_RADIUS * 0.5);
+  const bodySlowMult = inEnemyGravity ? LOOSE_GRAVITY_SLOW_FACTOR : 1.0;
+  const moveMult = (fighter.specialActive?.type === 'defense' ? 0.60 : 1.0) * bodySlowMult;
   if (fighter.dashTimer > 0) {
     fighter.dashTimer = Math.max(0, fighter.dashTimer - dt);
-    fighter.x += fighter.dashVx * dt;
-    fighter.y += fighter.dashVy * dt;
+    fighter.x += fighter.dashVx * bodySlowMult * dt;
+    fighter.y += fighter.dashVy * bodySlowMult * dt;
     if (Math.random() < 0.65) {
       fighter.dashAfterimages.push({ x: fighter.x, y: fighter.y, life: 0.22, maxLife: 0.22 });
     }
@@ -249,14 +254,28 @@ export function updateFighter(
   // Advance active weapon animation
   if (fighter.attackAnim) {
     const anim = fighter.attackAnim;
-    anim.timer += dt;
+    let animDt = dt;
+    if (anim.type === 'melee') {
+      const meleeX = fighter.x + Math.cos(anim.lastSafeAngle) * (baseAnchorDist + 16);
+      const meleeY = fighter.y + Math.sin(anim.lastSafeAngle) * (baseAnchorDist + 16);
+      if (
+        isInsideLooseGravityField(opponent, fighter.x, fighter.y, R) ||
+        isInsideLooseGravityField(opponent, meleeX, meleeY, R)
+      ) {
+        animDt *= LOOSE_GRAVITY_SLOW_FACTOR;
+      }
+    }
+    anim.timer += animDt;
 
     if (anim.type === 'ranged') {
+      const spearSlow = isInsideLooseGravityField(opponent, anim.anchorX, anim.anchorY, R * 1.1)
+        ? LOOSE_GRAVITY_SLOW_FACTOR
+        : 1.0;
       if (anim.phase === 'out') {
         const prevX = anim.anchorX;
         const prevY = anim.anchorY;
         const energyRatio = anim.initialEnergy > 0 ? clamp(anim.energy / anim.initialEnergy, 0.25, 1.0) : 1.0;
-        const step = anim.outSpeed * energyRatio * dt;
+        const step = anim.outSpeed * energyRatio * spearSlow * dt;
         anim.anchorX += Math.cos(anim.angle) * step;
         anim.anchorY += Math.sin(anim.angle) * step;
         anim.traveled += step;
@@ -321,6 +340,11 @@ export function updateFighter(
             targetX = anim.cmdX;
             targetY = anim.cmdY;
           }
+        } else if (fighter.isAI && anim.hasCmd) {
+          isManual = true;
+          isPointSeek = true;
+          targetX = anim.cmdX;
+          targetY = anim.cmdY;
         } else if (!fighter.isAI && guidedInput?.mode === 'touch' && guidedInput.touchHoldingAttack) {
           isManual = true;
           const projDist = 90 + 210 * clamp(guidedInput.touchAimStrength, 0.25, 1.0);
@@ -370,7 +394,7 @@ export function updateFighter(
         // Constant full guidedSpeed on BOTH PC & Mobile (no PC hover/braking advantage!)
         const baseGuidedSpd = anim.guidedSpeed ?? clamp(anim.outSpeed * 0.56, 320, 440);
         const speedFactor = anim.guidedStunTimer > 0 ? 0.50 : 1.0;
-        const spd = baseGuidedSpd * speedFactor;
+        const spd = baseGuidedSpd * speedFactor * spearSlow;
         anim.anchorX += Math.cos(anim.angle) * spd * dt;
         anim.anchorY += Math.sin(anim.angle) * spd * dt;
         anim.altitude = lerp(anim.altitude, 0, Math.min(1, dt * 10));
@@ -409,7 +433,7 @@ export function updateFighter(
         }
       } else if (anim.phase === 'ricochet') {
         anim.ricochetTimer -= dt;
-        const glideStep = anim.outSpeed * 0.65 * dt;
+        const glideStep = anim.outSpeed * 0.65 * spearSlow * dt;
         anim.anchorX += Math.cos(anim.angle) * glideStep;
         anim.anchorY += Math.sin(anim.angle) * glideStep;
         weaponAngle = anim.angle;
@@ -433,7 +457,7 @@ export function updateFighter(
           fighter.attackCooldown = 0.14;
           state.events.push({ type: 'sfx', kind: 'snap' });
         } else {
-          const moveStep = Math.min(d, anim.retSpeed * dt);
+          const moveStep = Math.min(d, anim.retSpeed * spearSlow * dt);
           anim.anchorX += (dx / d) * moveStep;
           anim.anchorY += (dy / d) * moveStep;
           anim.angle = Math.atan2(dy, dx);
@@ -538,12 +562,13 @@ export function updateFighter(
     }
 
     if (h.state === 'STOLEN_FLY') {
-      const stepX = h.vx * dt;
-      const stepY = h.vy * dt;
+      const stolenSlow = isInsideLooseGravityField(fighter, h.x, h.y, R * 0.85) ? LOOSE_GRAVITY_SLOW_FACTOR : 1.0;
+      const stepX = h.vx * stolenSlow * dt;
+      const stepY = h.vy * stolenSlow * dt;
       h.x += stepX;
       h.y += stepY;
       h.remainingDist -= Math.hypot(stepX, stepY);
-      h.spinAngle += dt * 14;
+      h.spinAngle += dt * 14 * stolenSlow;
       h.trail.push({ x: h.x, y: h.y });
       if (h.trail.length > 9) h.trail.shift();
 
@@ -606,16 +631,18 @@ export function updateFighter(
           insertRecoveredHexIntoCluster(fighter, h, state.events);
         }
       } else {
-        h.x += (dx / d) * 840 * dt;
-        h.y += (dy / d) * 840 * dt;
+        const retSlow = isInsideLooseGravityField(opponent, h.x, h.y, R * 0.85) ? LOOSE_GRAVITY_SLOW_FACTOR : 1.0;
+        h.x += (dx / d) * 840 * retSlow * dt;
+        h.y += (dy / d) * 840 * retSlow * dt;
         h.trail.push({ x: h.x, y: h.y });
         if (h.trail.length > 10) h.trail.shift();
       }
     } else if (h.state === 'ORBIT') {
       const isLooseOverdrive = fighter.specialActive?.type === 'loose';
-      const orbitSpeed = 1.65 * Math.pow(fighter.currentScale, -0.35) * (isLooseOverdrive ? 1.30 : 1.0);
+      const orbitSlow = isInsideLooseGravityField(opponent, h.x, h.y, R * 0.85) ? LOOSE_GRAVITY_SLOW_FACTOR : 1.0;
+      const orbitSpeed = 1.65 * Math.pow(fighter.currentScale, -0.35) * (isLooseOverdrive ? 1.30 : 1.0) * orbitSlow;
       h.orbitAngle += dt * orbitSpeed;
-      const orbitR = (PLAYER_RADIUS + 24 + R * 1.15) * (isLooseOverdrive ? 1.20 : 1.0);
+      const orbitR = isLooseOverdrive ? getLooseOrbitRadius(fighter) : PLAYER_RADIUS + 24 + R * 1.15;
       const goalX = fighter.x + Math.cos(h.orbitAngle) * orbitR;
       const goalY = fighter.y + Math.sin(h.orbitAngle) * orbitR;
       h.x = lerp(h.x, goalX, Math.min(1, dt * 14));
@@ -634,8 +661,9 @@ export function updateFighter(
         curSpd = targetSpd;
       }
 
-      const stepX = h.vx * dt;
-      const stepY = h.vy * dt;
+      const hexSlow = isInsideLooseGravityField(opponent, h.x, h.y, R * 0.85) ? LOOSE_GRAVITY_SLOW_FACTOR : 1.0;
+      const stepX = h.vx * hexSlow * dt;
+      const stepY = h.vy * hexSlow * dt;
       const stepDist = Math.hypot(stepX, stepY);
 
       if (stepDist >= h.remainingDist && !h.hasBounced) {
@@ -759,8 +787,9 @@ export function updateFighter(
         h.autoReturn = false;
         h.trail.length = 0;
       } else {
-        h.x += (dx / d) * recallSpeed * dt;
-        h.y += (dy / d) * recallSpeed * dt;
+        const recallSlow = isInsideLooseGravityField(opponent, h.x, h.y, R * 0.85) ? LOOSE_GRAVITY_SLOW_FACTOR : 1.0;
+        h.x += (dx / d) * recallSpeed * recallSlow * dt;
+        h.y += (dy / d) * recallSpeed * recallSlow * dt;
         h.trail.push({ x: h.x, y: h.y });
         if (h.trail.length > 12) h.trail.shift();
       }

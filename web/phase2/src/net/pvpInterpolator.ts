@@ -1,7 +1,12 @@
 import { BASE_HEX_RADIUS, PLAYER_MOVE_SPEED, PLAYER_RADIUS } from '@core/constants';
 import { axialToLocal, clamp, lerp } from '@core/hexMath';
 import { constrainToHexArena, resolveCircleObstacle } from '@core/obstacles';
-import { getActiveAnchorDist, isHexStolen } from '@core/structure';
+import {
+  LOOSE_GRAVITY_SLOW_FACTOR,
+  getActiveAnchorDist,
+  isHexStolen,
+  isInsideLooseGravityField,
+} from '@core/structure';
 import type { Fighter, HexEntity, MatchState, Obstacle } from '@core/types';
 import {
   lerpAngle,
@@ -84,7 +89,9 @@ export class PvPInterpolator {
       this.initializedPred = true;
     }
 
-    const moveMult = p.specialActive?.type === 'defense' ? 0.60 : 1.0;
+    const inEnemyGravity = isInsideLooseGravityField(state.enemy, this.predX, this.predY, PLAYER_RADIUS * 0.5);
+    const moveMult =
+      (p.specialActive?.type === 'defense' ? 0.60 : 1.0) * (inEnemyGravity ? LOOSE_GRAVITY_SLOW_FACTOR : 1.0);
     this.pendingMoves.push({ seq, dt, mx, my, moveMult });
     if (this.pendingMoves.length > 90) {
       this.pendingMoves.shift();
