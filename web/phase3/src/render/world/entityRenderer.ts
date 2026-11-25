@@ -25,7 +25,7 @@ export function renderGravityField(
   const fillRgba = isPlayer ? 'rgba(56, 189, 248,' : 'rgba(251, 113, 133,';
 
   ctx.save();
-  // Gravity well gradient fill spanning from fighter body edge to expanded outer boundary (+30%)
+  // Gravity well gradient fill spanning from fighter body edge to expanded outer boundary (+40% over v2)
   const grad = ctx.createRadialGradient(f.x, f.y, PLAYER_RADIUS * 0.9, f.x, f.y, fieldR);
   grad.addColorStop(0, `${fillRgba} 0.04)`);
   grad.addColorStop(0.55, `${fillRgba} 0.14)`);
@@ -45,7 +45,7 @@ export function renderGravityField(
   ctx.arc(f.x, f.y, orbitR, 0, Math.PI * 2);
   ctx.stroke();
 
-  // Outer gravity boundary ring (-50% enemy physical entity speed zone)
+  // Outer gravity boundary ring (-80% enemy physical entity speed zone)
   ctx.strokeStyle = ringColor;
   ctx.globalAlpha = 0.72;
   ctx.lineWidth = 2.6;

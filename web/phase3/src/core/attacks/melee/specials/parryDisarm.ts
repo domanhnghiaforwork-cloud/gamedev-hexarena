@@ -11,8 +11,10 @@ export const PARRY_DISARM_SKILL: SpecialSkillDefinition = {
   cd: 20.0,
   disarmDur: 4.5,
   color: '#fbbf24',
-  desc: 'Mọi nhát chém trong 8s có thể bật ngược & chiếm mảnh đơn địch (4.5s) hoặc tước 1 mảnh vũ khí ghép của địch.',
+  desc: 'Tự phóng to 150% nhưng giữ độ bền/độ cứng chuẩn 100%; mọi nhát chém trong 8s có thể bật ngược & chiếm mảnh đơn địch (4.5s) hoặc tước 1 mảnh vũ khí ghép của địch.',
   activate: ({ state, fighter }) => {
+    const prevScale = fighter.targetScale;
+    fighter.targetScale = 1.5;
     fighter.specialActive = {
       type: 'melee',
       skillId: PARRY_DISARM_SKILL.id,
@@ -20,6 +22,7 @@ export const PARRY_DISARM_SKILL: SpecialSkillDefinition = {
       maxTimer: PARRY_DISARM_SKILL.dur,
       duration: PARRY_DISARM_SKILL.dur,
       consumed: false,
+      prevScale,
     };
     state.events.push({
       type: 'floatingText',
@@ -31,8 +34,15 @@ export const PARRY_DISARM_SKILL: SpecialSkillDefinition = {
     });
     return true;
   },
+  onUpdate: ({ fighter }) => {
+    fighter.targetScale = 1.5;
+  },
   onExpire: ({ fighter }) => {
+    const prevScale = fighter.specialActive?.prevScale;
     fighter.specialActive = null;
+    if (prevScale) {
+      fighter.targetScale = prevScale;
+    }
   },
 };
 

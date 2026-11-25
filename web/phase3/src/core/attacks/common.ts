@@ -9,6 +9,12 @@ export function setFighterScale(state: MatchState, fighter: Fighter, scaleVal: S
     }
     return;
   }
+  if (fighter.specialActive?.type === 'melee') {
+    if (!fighter.isAI) {
+      state.events.push({ type: 'toast', message: 'Phản Chém đang giữ kích thước 150%!', target: fighter.id });
+    }
+    return;
+  }
   fighter.targetScale = scaleVal;
   if (!fighter.isAI) {
     state.events.push({ type: 'sfx', kind: 'uiClick' });
@@ -33,7 +39,7 @@ export function setFighterForm(state: MatchState, fighter: Fighter, newForm: For
 
   // Cancel any active form-specific Special Skill cleanly on form switch (prevents cross-form buff abuse)
   if (fighter.specialActive) {
-    if (fighter.specialActive.type === 'defense' && fighter.specialActive.prevScale) {
+    if (fighter.specialActive.prevScale) {
       fighter.targetScale = fighter.specialActive.prevScale;
     }
     fighter.specialActive = null;
@@ -49,7 +55,7 @@ export function setFighterForm(state: MatchState, fighter: Fighter, newForm: For
     fighter.hexes.forEach((h, idx) => {
       if (h.state !== 'BROKEN' && !isHexStolen(h)) {
         h.state = 'ORBIT';
-        h.selected = false;
+        h.selected = true;
         h.altitude = 0;
         h.orbitAngle = fighter.facing + (idx / Math.max(1, total)) * Math.PI * 2;
         h.isReassembling = false;

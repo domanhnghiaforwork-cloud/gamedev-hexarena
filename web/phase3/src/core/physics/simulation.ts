@@ -147,7 +147,7 @@ export function updateFighter(
     }
   }
 
-  // Movement & Dash (Defense Fortress -40%; Opponent Loose Gravity Field -50%)
+  // Movement & Dash (Defense Fortress -40%; Opponent Loose Gravity Field -80%)
   const inEnemyGravity = isInsideLooseGravityField(opponent, fighter.x, fighter.y, PLAYER_RADIUS * 0.5);
   const bodySlowMult = inEnemyGravity ? LOOSE_GRAVITY_SLOW_FACTOR : 1.0;
   const moveMult = (fighter.specialActive?.type === 'defense' ? 0.60 : 1.0) * bodySlowMult;

@@ -55,7 +55,7 @@ export function createHex(index: number, materialId: MaterialId, ownerId: Fighte
     hp: maxHp,
     maxHp,
     state: 'ORBIT',
-    selected: false,
+    selected: true,
     cooldown: 0,
     regenDelay: 0,
     flashTimer: 0,
@@ -201,19 +201,26 @@ export function getEffectiveHexStats(fighter: Fighter, hex: HexEntity): Effectiv
     else if (fighter.rotMode === 'random') spinMult = hex.randomRoll || 1.0;
   }
 
+  const isFortress =
+    fighter.specialActive?.type === 'defense' && isHexAnchored(fighter, hex);
+  const isMeleeSpecial =
+    fighter.specialActive?.type === 'melee' && isHexAnchored(fighter, hex);
+  const hardScale = isFortress ? 0.6 : isMeleeSpecial ? 1.0 : S;
+
   return {
     radius: BASE_HEX_RADIUS * S,
-    hardness: mat.hard * adjBonus * Math.pow(S, -1.5),
+    hardness: mat.hard * adjBonus * Math.pow(hardScale, -1.5),
     damage: mat.sharp * 0.42 * roleDmgMult * spinMult * Math.pow(S, -1.0),
     speedMult: (mat.agil / 100) * Math.pow(S, -0.5),
   };
 }
 
-export const LOOSE_GRAVITY_SLOW_FACTOR = 0.50;
+export const LOOSE_GRAVITY_SLOW_FACTOR = 0.20;
+export const LOOSE_GRAVITY_RANGE_MULT = 1.30 * 1.40;
 
 export function getLooseGravityFieldRadius(fighter: Fighter): number {
   const currentLooseRing = (PLAYER_RADIUS + 24 + BASE_HEX_RADIUS * fighter.currentScale * 1.15) * 1.20;
-  return currentLooseRing * 1.30;
+  return currentLooseRing * LOOSE_GRAVITY_RANGE_MULT;
 }
 
 export function getLooseOrbitRadius(fighter: Fighter): number {
@@ -248,7 +255,9 @@ export function isHexAnchored(fighter: Fighter, hex: HexEntity): boolean {
 export function getStructuralResistance(defender: Fighter, defHex: HexEntity): number {
   const isFortress =
     defender.specialActive?.type === 'defense' && isHexAnchored(defender, defHex);
-  const S = isFortress ? 0.6 : defender.currentScale;
+  const isMeleeSpecial =
+    defender.specialActive?.type === 'melee' && isHexAnchored(defender, defHex);
+  const S = isFortress ? 0.6 : isMeleeSpecial ? 1.0 : defender.currentScale;
   const adjBonus = defHex.state === 'ASSEMBLED' ? 1 + 0.1 * defHex.adjCount : 1.0;
   const anchorBonus = isHexAnchored(defender, defHex) ? ANCHOR_BONUS : 1.0;
   return defHex.material.hard * Math.pow(S, -1.5) * adjBonus * anchorBonus;

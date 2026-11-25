@@ -12,6 +12,7 @@ import {
   placePlantedHexSafely,
   segmentIntersectsAnyObstacle,
 } from '../world/obstacles';
+import { triggerShieldMiniPulse } from '../attacks/defense/specials/counterFortress';
 import { performMeleeParrySteal } from '../attacks/melee/specials/parryDisarm';
 import {
   computeLooseKineticEnergy,
@@ -237,6 +238,8 @@ export function damageFighterBody(
     state.matchOver = true;
     state.winner = attacker.id;
     state.events.push({ type: 'matchEnd', playerWon: attacker.id === 'player' });
+  } else if (defender.specialActive?.type === 'defense') {
+    chargeShieldFortress(state, attacker, defender, 65);
   }
 }
 
@@ -298,10 +301,16 @@ export function computeEffectiveImpactAngle(
   return theta;
 }
 
-function chargeShieldFortress(def: Fighter, absorbedEnergy: number): void {
+function chargeShieldFortress(
+  state: MatchState,
+  att: Fighter,
+  def: Fighter,
+  absorbedEnergy: number,
+): void {
   if (def.specialActive?.type === 'defense') {
     const add = clamp(absorbedEnergy * 0.75, 25, 110);
     def.specialActive.storedEnergy = Math.min(360, (def.specialActive.storedEnergy ?? 0) + add);
+    triggerShieldMiniPulse(state, def, att, absorbedEnergy, applyHexDurabilityLoss);
   }
 }
 
@@ -408,7 +417,7 @@ export function resolveCombatCollisions(state: MatchState): void {
           }
           stoppedThisFrame = true;
 
-          chargeShieldFortress(def, anim.initialEnergy * 0.7);
+          chargeShieldFortress(state, att, def, anim.initialEnergy * 0.7);
           damageHex(state, att, ah, def, dh, 0.30 * passDmgMult);
           state.events.push({
             type: 'sparks',
@@ -424,7 +433,7 @@ export function resolveCombatCollisions(state: MatchState): void {
           break;
         } else if (eEff < rDef) {
           // Rule 3 Scenario 1 / 2: Full Block or Multi-Layer Stop
-          chargeShieldFortress(def, anim.initialEnergy);
+          chargeShieldFortress(state, att, def, anim.initialEnergy);
           damageHex(state, att, ah, def, dh, 0.85 * passDmgMult);
           if (isHexAnchored(def, dh)) {
             damageHex(state, def, dh, att, ah, 0.55);
@@ -567,7 +576,7 @@ export function resolveCombatCollisions(state: MatchState): void {
           const rDef = getStructuralResistance(def, dh);
 
           if (theta > DEFLECT_ANGLE_RAD && eEff < rDef) {
-            chargeShieldFortress(def, curEnergy * 0.7);
+            chargeShieldFortress(state, att, def, curEnergy * 0.7);
             damageHex(state, att, ah, def, dh, 0.30 * attackDmgMult);
             if (ah.state === 'LAUNCHED') {
               const dot = ah.vx * nx + ah.vy * ny;
@@ -586,7 +595,7 @@ export function resolveCombatCollisions(state: MatchState): void {
             state.events.push({ type: 'sfx', kind: 'bounce' });
             break;
           } else if (eEff < rDef) {
-            chargeShieldFortress(def, curEnergy);
+            chargeShieldFortress(state, att, def, curEnergy);
             damageHex(state, att, ah, def, dh, attackDmgMult);
             applyLooseSelfWear(state, att, ah, def, dh, rDef);
             def.kbX += dirX * 65;
@@ -670,7 +679,7 @@ export function resolveCombatCollisions(state: MatchState): void {
         }
 
         // Anchored Melee / Planted / Centrifugal Orbit clash
-        chargeShieldFortress(def, 45);
+        chargeShieldFortress(state, att, def, 45);
         damageHex(state, att, ah, def, dh, attackDmgMult);
         if (isHexAnchored(def, dh)) {
           damageHex(state, def, dh, att, ah, 0.55);

@@ -172,6 +172,7 @@ export interface SpecialActiveState {
   duration: number;
   consumed?: boolean;
   storedEnergy?: number;
+  miniPulseCd?: number;
   prevScale?: ScaleTier;
 }
 

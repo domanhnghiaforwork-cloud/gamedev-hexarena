@@ -224,7 +224,7 @@ describe('Power-Law Scaling & 4-Rule Emergent Physics', () => {
     expect(maxSpeedDrop).toBeLessThan(15); // Constant full guidedSpeed (zero arrival braking!)
   });
 
-  it('expands Loose Gravity Field +30%, places orbit hexes at midpoint, and slows enemy entities by 50%', () => {
+  it('expands Loose Gravity Field +40% over Phase 2 baseline, places orbit hexes at midpoint, and slows enemy entities by 80%', () => {
     const idleInput = {
       mode: 'desktop' as const,
       touchHoldingAttack: false,
@@ -233,7 +233,7 @@ describe('Power-Law Scaling & 4-Rule Emergent Physics', () => {
       desktopHoldingGuided: false,
     };
 
-    // 1. Field radius (+30% over old 1.2x loose ring) & midpoint orbit radius
+    // 1. Field radius (+40% over previous 1.30x baseline) & midpoint orbit radius
     const state = createMatchState();
     const { player } = state;
     setFighterForm(state, player, 'loose');
@@ -245,7 +245,7 @@ describe('Power-Law Scaling & 4-Rule Emergent Physics', () => {
     const prevLooseRing = (PLAYER_RADIUS + 24 + BASE_HEX_RADIUS * player.currentScale * 1.15) * 1.20;
     const fieldR = getLooseGravityFieldRadius(player);
     const expectedMidOrbit = (PLAYER_RADIUS + fieldR) * 0.5;
-    expect(fieldR).toBeCloseTo(prevLooseRing * 1.30, 4);
+    expect(fieldR).toBeCloseTo(prevLooseRing * 1.30 * 1.40, 4);
     expect(getLooseOrbitRadius(player)).toBeCloseTo(expectedMidOrbit, 4);
 
     // Let loose hexes settle onto the midpoint orbit
@@ -255,7 +255,7 @@ describe('Power-Law Scaling & 4-Rule Emergent Physics', () => {
     const orbitDist = Math.hypot(orbitHex!.x - player.x, orbitHex!.y - player.y);
     expect(Math.abs(orbitDist - expectedMidOrbit)).toBeLessThan(1.5);
 
-    // 2. Enemy body moves at 50% speed inside the Gravity Field
+    // 2. Enemy body moves at 20% speed (-80%) inside the Gravity Field
     const outsideState = createMatchState();
     outsideState.obstacles = [];
     outsideState.player.x = -360;
@@ -279,16 +279,16 @@ describe('Power-Law Scaling & 4-Rule Emergent Physics', () => {
       h.x = -300;
       h.y = -300;
     }
-    insideState.enemy.x = 80; // inside fieldR (~117px)
+    insideState.enemy.x = 80; // inside fieldR (~164px)
     insideState.enemy.y = 0;
     insideState.enemy.vx = 0;
     insideState.enemy.vy = 200;
     const inStartY = insideState.enemy.y;
     stepSimulation(insideState, FIXED_DT, idleInput);
     const inDisp = Math.abs(insideState.enemy.y - inStartY);
-    expect(inDisp / outDisp).toBeCloseTo(0.5, 2);
+    expect(inDisp / outDisp).toBeCloseTo(0.2, 2);
 
-    // 3. Enemy LAUNCHED hex flies at 50% speed inside the Gravity Field
+    // 3. Enemy LAUNCHED hex flies at 20% speed (-80%) inside the Gravity Field
     const projState = createMatchState();
     projState.obstacles = [];
     projState.player.x = 0;
@@ -313,9 +313,9 @@ describe('Power-Law Scaling & 4-Rule Emergent Physics', () => {
     testHex.hasBounced = true;
     const prevHexX = testHex.x;
     stepSimulation(projState, FIXED_DT, idleInput);
-    expect(testHex.x - prevHexX).toBeCloseTo(600 * 0.5 * FIXED_DT, 2);
+    expect(testHex.x - prevHexX).toBeCloseTo(600 * 0.2 * FIXED_DT, 2);
 
-    // 4. Enemy melee swing advances at 50% speed when inside the Gravity Field
+    // 4. Enemy melee swing advances at 20% speed (-80%) when inside the Gravity Field
     const meleeOut = createMatchState();
     meleeOut.obstacles = [];
     meleeOut.player.x = -380;
@@ -339,9 +339,9 @@ describe('Power-Law Scaling & 4-Rule Emergent Physics', () => {
     executeFighterAttack(meleeIn, meleeIn.enemy, 0);
     stepSimulation(meleeIn, FIXED_DT, idleInput);
     const slowedTimer = meleeIn.enemy.attackAnim?.timer ?? 0;
-    expect(slowedTimer / normalTimer).toBeCloseTo(0.5, 2);
+    expect(slowedTimer / normalTimer).toBeCloseTo(0.2, 2);
 
-    // 5. Enemy ranged spear advances at 50% speed inside the Gravity Field
+    // 5. Enemy ranged spear advances at 20% speed (-80%) inside the Gravity Field
     const spearOut = createMatchState();
     spearOut.obstacles = [];
     spearOut.player.x = -380;
@@ -369,7 +369,7 @@ describe('Power-Law Scaling & 4-Rule Emergent Physics', () => {
       h.x = -300;
       h.y = -300;
     }
-    spearIn.enemy.x = -110; // no body overlap with player (0,0), anchor spawns ~ -60 inside fieldR (~117)
+    spearIn.enemy.x = -110; // no body overlap with player (0,0), anchor spawns inside fieldR (~164)
     spearIn.enemy.y = 0;
     setFighterForm(spearIn, spearIn.enemy, 'slot1');
     for (let i = 0; i < 30; i++) stepSimulation(spearIn, FIXED_DT, idleInput);
@@ -380,6 +380,80 @@ describe('Power-Law Scaling & 4-Rule Emergent Physics', () => {
     const inSpearStartX = inAnim.anchorX;
     stepSimulation(spearIn, FIXED_DT, idleInput);
     const inSpearStep = Math.hypot(inAnim.anchorX - inSpearStartX, inAnim.anchorY);
-    expect(inSpearStep / outSpearStep).toBeCloseTo(0.5, 2);
+    expect(inSpearStep / outSpearStep).toBeCloseTo(0.2, 2);
+  });
+
+  it('auto-selects all loose shards on match start and when switching back to loose form', () => {
+    const state = createMatchState();
+    expect(state.player.form).toBe('loose');
+    expect(state.player.hexes.every((h) => h.selected)).toBe(true);
+
+    setFighterForm(state, state.player, 'slot2');
+    setFighterForm(state, state.player, 'loose');
+    expect(state.player.hexes.every((h) => h.state === 'ORBIT' && h.selected)).toBe(true);
+  });
+
+  it('enlarges Melee Special to 150% while keeping hardness/resistance equal to 100% scale and restores scale on expiry', () => {
+    const state = createMatchState();
+    const { player } = state;
+    setFighterForm(state, player, 'slot2');
+    setFighterScale(state, player, 1.0);
+    const root = player.hexes[player.rootHexId];
+    const baseRes = getStructuralResistance(player, root);
+
+    expect(triggerFighterSpecial(state, player)).toBe(true);
+    expect(player.targetScale).toBe(1.5);
+    player.currentScale = 1.5;
+
+    // Even when enlarged to 150%, Melee Special resistance matches 100% scale!
+    expect(getStructuralResistance(player, root)).toBeCloseTo(baseRes, 4);
+
+    // Expire skill -> restores previous scale (1.0)
+    if (player.specialActive) player.specialActive.timer = 0.01;
+    stepSimulation(state, FIXED_DT);
+    expect(player.specialActive).toBeNull();
+    expect(player.targetScale).toBe(1.0);
+  });
+
+  it('emits reactive mini damaging shockwave when Defense Special is hit and expands final Counter-Pulse range & knockback', () => {
+    const state = createMatchState();
+    state.obstacles = [];
+    const { player, enemy } = state;
+    setFighterForm(state, player, 'slot3'); // Defense
+    player.x = 0;
+    player.y = 0;
+    player.facing = 0;
+    expect(triggerFighterSpecial(state, player, applyHexDurabilityLoss)).toBe(true);
+    player.currentScale = 1.5;
+    enemy.x = 125;
+    enemy.y = 0;
+    setFighterForm(state, enemy, 'loose');
+    stepSimulation(state, FIXED_DT); // sync shield hex world positions to player (0, 0) at scale 1.5
+
+    const enemyHpBefore = enemy.hp;
+    const shieldHex = player.hexes.find((h) => h.state === 'ASSEMBLED')!;
+    const attHex = enemy.hexes[0];
+    attHex.state = 'LAUNCHED';
+    attHex.x = shieldHex.x + 12;
+    attHex.y = shieldHex.y;
+    attHex.vx = -400;
+    attHex.vy = 0;
+    attHex.energy = 80;
+    attHex.initialEnergy = 80;
+    attHex.remainingDist = 120;
+
+    stepSimulation(state, FIXED_DT);
+    // Reactive mini shockwave should damage enemy HP & put miniPulseCd on cooldown
+    expect(enemy.hp).toBeLessThan(enemyHpBefore);
+    expect(player.specialActive?.miniPulseCd ?? 0).toBeGreaterThan(0);
+
+    // Final Counter-Pulse hits at extended range (260px > old 210px) with strong knockback (>= 580)
+    const hpBeforeFinal = enemy.hp;
+    enemy.x = 260;
+    enemy.y = 0;
+    enemy.kbX = 0;
+    expect(triggerFighterSpecial(state, player, applyHexDurabilityLoss)).toBe(true);
+    expect(enemy.hp).toBeLessThan(hpBeforeFinal);
+    expect(enemy.kbX).toBeGreaterThanOrEqual(580);
   });
 });

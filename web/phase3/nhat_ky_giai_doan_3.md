@@ -46,3 +46,8 @@ Tài liệu ghi nhận quá trình phát triển nhánh **Giai đoạn 3** trong
   * Cho phép tùy chỉnh **5 bộ màu Neon** (giữ nguyên phe địch Đỏ san hô `#fb7185` để đọc tình huống $0.2\text{s}$), **4 kiểu hạt vỡ mảnh** và **4 hiệu ứng Lướt**, kèm Canvas xem trước động (`Thử Lướt` / `Thử Vỡ mảnh`).
   * Mở rộng bảng SQLite `users` thêm cột `cosmetics_json` và API `PUT /api/cosmetics` để đồng bộ đa thiết bị.
 * **Kiểm thử:** Bổ sung `tests/phase3Polish.test.ts` xác minh 16 file WAV hợp lệ, sanitize cấu hình, lưu SQLite và telemetry chiến đấu.
+* **Cân bằng Ulti Đơn lẻ (*Trường Trọng Lực*):** Tăng phạm vi vùng ảnh hưởng thêm **+40%** (`LOOSE_GRAVITY_RANGE_MULT = 1.82`) và tăng mức làm chậm mọi thực thể vật lý địch lên **80%** (`LOOSE_GRAVITY_SLOW_FACTOR = 0.20`).
+* **Cập nhật 3 cơ chế chiến đấu:**
+  * **Mảnh Đơn lẻ mặc định chọn hết:** Mọi mảnh tự động `selected = true` ngay khi vào trận hoặc khi chuyển về trạng thái Đơn lẻ.
+  * **Ulti Đánh gần (*Phản Chém Tước Mảnh*):** Tự động phóng to kích thước **150%** trong suốt 8s nhưng vẫn giữ nguyên độ cứng/độ bền như kích thước **100%**, tự hoàn lại kích thước cũ khi hết chiêu.
+  * **Ulti Phòng thủ (*Pháo Đài Phản Xung*):** Tự phát sóng xung kích phản đòn nhỏ gây sát thương mỗi khi bị tấn công trong thời gian duy trì (`miniPulseCd = 0.30s`), đồng thời mở rộng tầm & tăng lực đẩy lùi của Sóng Phản Xung cuối.
