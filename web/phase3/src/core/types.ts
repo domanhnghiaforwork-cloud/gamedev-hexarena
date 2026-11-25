@@ -311,6 +311,14 @@ export interface MatchStats {
   hexBroken: number;
   enemyHexBroken: number;
   elapsed: number;
+  playerAttacks: number;
+  playerHits: number;
+  enemyAttacks: number;
+  enemyHits: number;
+  playerDmgByMode: Record<AttackModeId, number>;
+  enemyDmgByMode: Record<AttackModeId, number>;
+  playerSpecialUses: Record<AttackModeId, number>;
+  enemySpecialUses: Record<AttackModeId, number>;
 }
 
 export interface GuidedSteerInput {
@@ -323,7 +331,10 @@ export interface GuidedSteerInput {
 
 export type SfxKind =
   | 'launch'
+  | 'meleeWhoosh'
   | 'clash'
+  | 'clashHeavy'
+  | 'clashSharp'
   | 'shatter'
   | 'snap'
   | 'recall'
@@ -331,6 +342,7 @@ export type SfxKind =
   | 'pierce'
   | 'dash'
   | 'special'
+  | 'gravityField'
   | 'pulse'
   | 'cancel'
   | 'uiClick';

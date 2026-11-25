@@ -138,6 +138,11 @@
   font-weight: 700;
   color: #cbd5e1;
 }
+.lobby-panel-head-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 
 /* 4-Row Weapon Inventory inside Left Card */
 .lobby-weapon-list.four-rows {

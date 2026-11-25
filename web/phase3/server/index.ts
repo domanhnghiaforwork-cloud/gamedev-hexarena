@@ -385,6 +385,7 @@ const server = http.createServer(async (req, res) => {
         body.loadout,
         body.mobileHud,
         body.pcControls,
+        body.cosmetics,
       );
       if (!result.ok) {
         sendJson(res, 400, { error: result.error });
@@ -449,6 +450,22 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       sendJson(res, 200, saved);
+      return;
+    }
+
+    if (method === 'PUT' && url === '/api/cosmetics') {
+      const claim = getBearerUser(req);
+      if (!claim) {
+        sendJson(res, 401, { error: 'Chưa đăng nhập.' });
+        return;
+      }
+      const body = await readJsonBody(req);
+      const saved = userStore.updateCosmetics(claim.uid, body.cosmetics);
+      if (!saved) {
+        sendJson(res, 404, { error: 'Không tìm thấy tài khoản.' });
+        return;
+      }
+      sendJson(res, 200, { cosmetics: saved });
       return;
     }
 

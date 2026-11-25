@@ -44,5 +44,7 @@ export function executeRangedAttack({ state, fighter, angle, strength }: AttackE
     hitHexIds: new Set(),
   };
   fighter.attackCooldown = 0.25;
+  if (fighter.id === 'player') state.stats.playerAttacks++;
+  else state.stats.enemyAttacks++;
   state.events.push({ type: 'sfx', kind: 'launch' });
 }

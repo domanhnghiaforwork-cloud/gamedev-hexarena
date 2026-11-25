@@ -55,6 +55,8 @@ export function launchHex(
   hex.hasBounced = false;
   hex.bouncesLeft = fighter.rotMode === 'random' ? 3 : 0;
   hex.trail = [];
+  if (fighter.id === 'player') state.stats.playerAttacks++;
+  else state.stats.enemyAttacks++;
   state.events.push({ type: 'sfx', kind: 'launch' });
 }
 

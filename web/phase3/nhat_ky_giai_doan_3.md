@@ -29,3 +29,20 @@ Tài liệu ghi nhận quá trình phát triển nhánh **Giai đoạn 3** trong
   * `src/render/` phân cấp `world/`, `effects/`, `hud/`, `assets/assetLoader.ts`; `src/ui/` phân cấp `common/`, `screens/`, `hud/`, `modals/`; `src/styles/main.css` tách thành 7 tầng CSS giữ nguyên thứ tự cascade.
 * **Kiểm thử & Xác minh:**
   * Bổ sung `tests/attackRegistry.test.ts` kiểm chứng đăng ký & chạy thực tế kỹ năng mở rộng thứ 2 cho nhánh `melee` cùng cấu hình font tiếng Việt.
+
+---
+
+## v3.2 — 25/11/2026: Nâng tầm Cảm giác Game (SFX WAV theo vật liệu, Nhạc nền động theo HP, VFX 2.5D, Bảng tổng kết trận & Cá nhân hóa lưu SQLite)
+
+* **Âm thanh có chiều sâu & Nhạc nền thích ứng (`scripts/generateAudioAssets.mjs`, `public/assets/audio/sfx/`, `src/audio/`):**
+  * Tạo 16 file `.wav` đa lớp cho toàn bộ `SfxKind` với fallback tự động về `SynthEngine` và biến thiên nhẹ cao độ (`playbackRate 0.96–1.04`).
+  * Phân biệt âm va chạm theo chất liệu mảnh (`clashHeavy` kim loại trầm, `clash` thép cân bằng, `clashSharp` tinh thể sắc bén), âm gió chém `meleeWhoosh` và hiệu ứng `gravityField`.
+  * Bổ sung `BgmEngine` phát nhạc Sảnh (`96 BPM`) và nhạc Trận đấu (`118 BPM` tự tăng nhịp tối đa `136 BPM` + tầng trống/giai điệu căng thẳng khi HP một trong hai bên xuống $\le 30\%$).
+  * Thêm 3 thanh trượt **Âm lượng tổng / SFX / Nhạc nền** kèm nút `Thử âm` trong Cài đặt (`localStorage`).
+* **Thị giác 2.5D, VFX & Bảng tổng kết trận đấu chi tiết (`src/render/`, `src/core/`, `src/ui/hud/topBar.ts`, `index.html`):**
+  * Nâng cấp bóng đổ 2 lớp cho vật cản/nhân vật/mảnh bay cao, đường hàn năng lượng 2 lớp phát sáng mượt, dải vệt chuyển động thuôn, cung chém sáng cho Đánh gần và dấu hiệu nhận diện riêng từng Ulti.
+  * Mở rộng `MatchStats` (đồng bộ đảo ghế PvP qua `src/net/protocol.ts` & `pvpInterpolator.ts`) và thiết kế lại bảng kết thúc trận hiển thị **Sát thương (Bạn vs Đối thủ)**, **Mảnh phá**, **Độ chính xác (%)**, **MVP Dạng / Ulti** và thanh **Phân bổ sát thương theo 4 phương thức**.
+* **Cá nhân hóa Ngoại hình & Lưu SQLite (`src/config/cosmetics.ts`, `src/ui/modals/cosmeticsModal.ts`, `server/db.ts`, `server/index.ts`, `src/net/authClient.ts`):**
+  * Cho phép tùy chỉnh **5 bộ màu Neon** (giữ nguyên phe địch Đỏ san hô `#fb7185` để đọc tình huống $0.2\text{s}$), **4 kiểu hạt vỡ mảnh** và **4 hiệu ứng Lướt**, kèm Canvas xem trước động (`Thử Lướt` / `Thử Vỡ mảnh`).
+  * Mở rộng bảng SQLite `users` thêm cột `cosmetics_json` và API `PUT /api/cosmetics` để đồng bộ đa thiết bị.
+* **Kiểm thử:** Bổ sung `tests/phase3Polish.test.ts` xác minh 16 file WAV hợp lệ, sanitize cấu hình, lưu SQLite và telemetry chiến đấu.

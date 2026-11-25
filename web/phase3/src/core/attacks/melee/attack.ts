@@ -21,5 +21,7 @@ export function executeMeleeAttack({ state, fighter, angle }: AttackExecuteConte
     hitHexIds: new Set(),
   };
   fighter.attackCooldown = dur + 0.12;
-  state.events.push({ type: 'sfx', kind: 'launch' });
+  if (fighter.id === 'player') state.stats.playerAttacks++;
+  else state.stats.enemyAttacks++;
+  state.events.push({ type: 'sfx', kind: 'meleeWhoosh' });
 }

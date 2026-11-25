@@ -1,3 +1,4 @@
+import { DEFAULT_COSMETICS, type PlayerCosmetics } from '@config/cosmetics';
 import { ARENA_RADIUS, PLAYER_RADIUS } from '@core/constants';
 import { clamp, lerp } from '@core/math/hexMath';
 import { findPlantedHexAtWorld } from '@attacks/loose/attack';
@@ -72,6 +73,7 @@ export class GameRenderer {
       snapGrid: boolean;
     },
     hideHUD = false,
+    playerCosmetics: PlayerCosmetics = DEFAULT_COSMETICS,
   ): void {
     const ctx = this.ctx;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
@@ -91,8 +93,8 @@ export class GameRenderer {
     renderArena(ctx, state.obstacles);
 
     // Loose Gravity Fields beneath fighters & hexes
-    renderGravityField(ctx, state.enemy, nowSec);
-    renderGravityField(ctx, state.player, nowSec);
+    renderGravityField(ctx, state.enemy, nowSec, playerCosmetics);
+    renderGravityField(ctx, state.player, nowSec, playerCosmetics);
 
     // Skill Indicator under fighters
     renderSkillIndicator(ctx, state.player, live.cancelHovered);
@@ -105,8 +107,8 @@ export class GameRenderer {
     }
 
     // Ground-level hexes
-    renderFighterHexLayer(ctx, state.enemy, false, nowSec);
-    renderFighterHexLayer(ctx, state.player, false, nowSec, hoverPlantedId);
+    renderFighterHexLayer(ctx, state.enemy, false, nowSec, -1, playerCosmetics);
+    renderFighterHexLayer(ctx, state.player, false, nowSec, hoverPlantedId, playerCosmetics);
 
     // Fighter Bodies
     const enemyInGravity = isInsideLooseGravityField(
@@ -121,12 +123,12 @@ export class GameRenderer {
       state.player.y,
       PLAYER_RADIUS * 0.5
     );
-    renderFighterBody(ctx, state.enemy, nowSec, enemyInGravity);
-    renderFighterBody(ctx, state.player, nowSec, playerInGravity);
+    renderFighterBody(ctx, state.enemy, nowSec, enemyInGravity, playerCosmetics);
+    renderFighterBody(ctx, state.player, nowSec, playerInGravity, playerCosmetics);
 
     // High-flight recalling hexes (over obstacles & fighters)
-    renderFighterHexLayer(ctx, state.enemy, true, nowSec);
-    renderFighterHexLayer(ctx, state.player, true, nowSec);
+    renderFighterHexLayer(ctx, state.enemy, true, nowSec, -1, playerCosmetics);
+    renderFighterHexLayer(ctx, state.player, true, nowSec, -1, playerCosmetics);
 
     // VFX Particles, Shockwaves & Floating Numbers
     this.vfx.render(ctx);

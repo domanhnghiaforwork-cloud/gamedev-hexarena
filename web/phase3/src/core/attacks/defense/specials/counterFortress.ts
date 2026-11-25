@@ -45,6 +45,9 @@ export function triggerShieldCounterPulse(
   state.events.push({ type: 'shake', amount: 7 + stored * 0.03 });
   if (!fighter.isAI) state.events.push({ type: 'haptic', pattern: [22, 14, 26] });
 
+  if (fighter.id === 'player') state.stats.playerAttacks++;
+  else state.stats.enemyAttacks++;
+
   const dOpp = dist(fighter.x, fighter.y, opponent.x, opponent.y);
   const angToOpp = Math.atan2(opponent.y - fighter.y, opponent.x - fighter.x);
   if (dOpp < range && Math.abs(angleDiff(ang, angToOpp)) <= halfArc) {
@@ -55,8 +58,15 @@ export function triggerShieldCounterPulse(
 
       opponent.hp = Math.max(0, opponent.hp - pulseDmg);
       opponent.damageFlash = 0.24;
-      if (fighter.id === 'player') state.stats.dmgDealt += pulseDmg;
-      else state.stats.enemyDmg += pulseDmg;
+      if (fighter.id === 'player') {
+        state.stats.dmgDealt += pulseDmg;
+        state.stats.playerHits++;
+        state.stats.playerDmgByMode.defense += pulseDmg;
+      } else {
+        state.stats.enemyDmg += pulseDmg;
+        state.stats.enemyHits++;
+        state.stats.enemyDmgByMode.defense += pulseDmg;
+      }
 
       state.events.push({
         type: 'floatingText',

@@ -41,6 +41,7 @@ export class TopBarController {
   private matchOverOverlay = document.getElementById('matchOverOverlay')!;
   private matchOverTitle = document.getElementById('matchOverTitle')!;
   private matchOverDesc = document.getElementById('matchOverDesc')!;
+  private matchOverSummary = document.getElementById('matchOverSummary')!;
 
   private toastTimeout: number | null = null;
   private countdownHideTimeout: number | null = null;
@@ -254,7 +255,84 @@ export class TopBarController {
     }
     const mins = Math.floor(state.stats.elapsed / 60);
     const secs = Math.floor(state.stats.elapsed % 60);
-    this.matchOverDesc.textContent = `Sát thương gây ra: ${state.stats.dmgDealt} · Mảnh địch đã phá: ${state.stats.hexBroken} · Thời gian: ${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    const timeLabel = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    this.matchOverDesc.textContent = `Thời lượng trận đấu: ${timeLabel} · HP còn lại: ${Math.ceil(state.player.hp)} vs ${Math.ceil(state.enemy.hp)}`;
+
+    const st = state.stats;
+    const acc = st.playerAttacks > 0 ? Math.min(100, Math.round((st.playerHits / st.playerAttacks) * 100)) : 0;
+
+    const modeMeta: Array<{ id: 'loose' | 'ranged' | 'melee' | 'defense'; label: string; color: string }> = [
+      { id: 'loose', label: 'Đơn lẻ', color: '#38bdf8' },
+      { id: 'ranged', label: 'Đánh xa', color: '#c084fc' },
+      { id: 'melee', label: 'Đánh gần', color: '#fbbf24' },
+      { id: 'defense', label: 'Phòng thủ', color: '#34d399' },
+    ];
+
+    let mvpMode = modeMeta[0];
+    let mvpDmg = -1;
+    let totalSpecials = 0;
+    for (const m of modeMeta) {
+      const d = st.playerDmgByMode[m.id] ?? 0;
+      totalSpecials += st.playerSpecialUses[m.id] ?? 0;
+      if (d > mvpDmg) {
+        mvpDmg = d;
+        mvpMode = m;
+      }
+    }
+
+    const modeTotalDmg = Math.max(
+      1,
+      modeMeta.reduce((sum, m) => sum + (st.playerDmgByMode[m.id] ?? 0), 0),
+    );
+
+    const barSegs = modeMeta
+      .filter((m) => (st.playerDmgByMode[m.id] ?? 0) > 0)
+      .map((m) => {
+        const pct = ((st.playerDmgByMode[m.id] ?? 0) / modeTotalDmg) * 100;
+        return `<span class="mo-bar-seg" style="width:${pct.toFixed(1)}%;background:${m.color};" title="${m.label}: ${st.playerDmgByMode[m.id]}"></span>`;
+      })
+      .join('');
+
+    const legendHtml = modeMeta
+      .map(
+        (m) => `
+          <span class="mo-legend-item">
+            <i style="background:${m.color}"></i>
+            <span>${m.label}: <strong>${st.playerDmgByMode[m.id] ?? 0}</strong></span>
+          </span>
+        `,
+      )
+      .join('');
+
+    this.matchOverSummary.innerHTML = `
+      <div class="mo-kpi-grid">
+        <div class="mo-kpi">
+          <span class="mo-kpi-label">Sát thương</span>
+          <strong class="mo-kpi-val cyan">${st.dmgDealt}</strong>
+          <span class="mo-kpi-sub">Đối thủ: ${st.enemyDmg}</span>
+        </div>
+        <div class="mo-kpi">
+          <span class="mo-kpi-label">Mảnh đã phá</span>
+          <strong class="mo-kpi-val amber">${st.hexBroken}</strong>
+          <span class="mo-kpi-sub">Bị phá: ${st.enemyHexBroken}</span>
+        </div>
+        <div class="mo-kpi">
+          <span class="mo-kpi-label">Độ chính xác</span>
+          <strong class="mo-kpi-val emerald">${acc}%</strong>
+          <span class="mo-kpi-sub">${st.playerHits} / ${st.playerAttacks} đòn</span>
+        </div>
+        <div class="mo-kpi">
+          <span class="mo-kpi-label">MVP Dạng / Ulti</span>
+          <strong class="mo-kpi-val" style="color:${mvpDmg > 0 ? mvpMode.color : '#cbd5e1'}">${mvpDmg > 0 ? mvpMode.label : 'Chưa có'}</strong>
+          <span class="mo-kpi-sub">Dùng Ulti: ${totalSpecials} lần</span>
+        </div>
+      </div>
+      <div class="mo-breakdown">
+        <div class="mo-breakdown-head">Phân bổ sát thương theo phương thức</div>
+        <div class="mo-bar-track">${barSegs || '<span class="mo-bar-empty"></span>'}</div>
+        <div class="mo-legend-row">${legendHtml}</div>
+      </div>
+    `;
   }
 
   public hideMatchOver(): void {

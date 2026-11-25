@@ -217,9 +217,19 @@ export class PvPInterpolator {
     state.timeRemaining = latest.timeRemaining;
     state.matchOver = latest.matchOver;
     state.winner = latest.winner;
-    state.stats.dmgDealt = latest.dmgDealt;
-    state.stats.hexBroken = latest.hexBroken;
-    state.stats.elapsed = latest.elapsed;
+    if (latest.stats) {
+      state.stats = {
+        ...latest.stats,
+        playerDmgByMode: { ...latest.stats.playerDmgByMode },
+        enemyDmgByMode: { ...latest.stats.enemyDmgByMode },
+        playerSpecialUses: { ...latest.stats.playerSpecialUses },
+        enemySpecialUses: { ...latest.stats.enemySpecialUses },
+      };
+    } else {
+      state.stats.dmgDealt = latest.dmgDealt;
+      state.stats.hexBroken = latest.hexBroken;
+      state.stats.elapsed = latest.elapsed;
+    }
 
     // Choose interpolation pair (A, B) along the synchronized server timeline
     const offset = this.clockOffsetMs ?? (nowMs - latest.serverTime);

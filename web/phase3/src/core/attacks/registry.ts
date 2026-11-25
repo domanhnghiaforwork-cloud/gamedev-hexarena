@@ -174,6 +174,8 @@ export function triggerFighterSpecial(
 
   fighter.specialCooldown = skill.cd;
   fighter.specialMaxCooldown = skill.cd;
+  if (fighter.id === 'player') state.stats.playerSpecialUses[skill.modeId]++;
+  else state.stats.enemySpecialUses[skill.modeId]++;
 
   state.events.push({
     type: 'shockwave',

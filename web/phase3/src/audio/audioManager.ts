@@ -1,18 +1,57 @@
 import type { SfxKind } from '@core/types';
+import type { AudioSettings } from '@storage/profiles';
+import { BgmEngine, type BgmMode } from './bgmEngine';
 import { SFX_CATALOG } from './sfxRegistry';
 import { SynthEngine } from './synthEngine';
 
 export class AudioManager {
   private synth = new SynthEngine();
+  private bgm = new BgmEngine();
   private bufferCache = new Map<string, AudioBuffer>();
+  private preloadStarted = false;
 
   public enabled = true;
   public masterVolume = 1.0;
   public sfxVolume = 1.0;
-  public bgmVolume = 0.5;
+  public bgmVolume = 0.45;
 
   public init(): void {
-    this.synth.init();
+    const ctx = this.synth.init();
+    if (ctx) {
+      this.bgm.bindContext(ctx);
+      this.bgm.setVolume(this.enabled ? this.masterVolume * this.bgmVolume : 0);
+      this.bgm.ensureRunning();
+      if (!this.preloadStarted) {
+        this.preloadStarted = true;
+        void this.preloadAllSfx();
+      }
+    }
+  }
+
+  public applySettings(settings: AudioSettings): void {
+    this.enabled = settings.enabled;
+    this.masterVolume = settings.masterVolume;
+    this.sfxVolume = settings.sfxVolume;
+    this.bgmVolume = settings.bgmVolume;
+    this.bgm.setVolume(this.enabled ? this.masterVolume * this.bgmVolume : 0);
+  }
+
+  public getSettings(): AudioSettings {
+    return {
+      enabled: this.enabled,
+      masterVolume: this.masterVolume,
+      sfxVolume: this.sfxVolume,
+      bgmVolume: this.bgmVolume,
+    };
+  }
+
+  public setBgmMode(mode: BgmMode): void {
+    this.bgm.setMode(mode);
+    this.bgm.setVolume(this.enabled ? this.masterVolume * this.bgmVolume : 0);
+  }
+
+  public setMatchTension(tension: number): void {
+    this.bgm.setTension(tension);
   }
 
   public async preloadSfx(kind: SfxKind): Promise<void> {
@@ -31,12 +70,19 @@ export class AudioManager {
     }
   }
 
+  public async preloadAllSfx(): Promise<void> {
+    const kinds = Object.keys(SFX_CATALOG) as SfxKind[];
+    await Promise.all(kinds.map((k) => this.preloadSfx(k)));
+  }
+
   private playBuffer(buf: AudioBuffer, vol: number): void {
     const ctx = this.synth.init();
     if (!ctx || vol <= 0.0005) return;
     const src = ctx.createBufferSource();
     const gain = ctx.createGain();
     src.buffer = buf;
+    // Slight pitch micro-variation keeps repeated rapid clashes organic
+    src.playbackRate.value = 0.96 + Math.random() * 0.08;
     gain.gain.setValueAtTime(vol, ctx.currentTime);
     src.connect(gain);
     gain.connect(ctx.destination);
@@ -54,7 +100,7 @@ export class AudioManager {
     if (entry.assetUrl) {
       const cached = this.bufferCache.get(entry.assetUrl);
       if (cached) {
-        this.playBuffer(cached, vol);
+        this.playBuffer(cached, Math.min(1, vol * 0.72));
         return;
       }
     }

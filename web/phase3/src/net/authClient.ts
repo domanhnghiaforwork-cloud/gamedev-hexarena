@@ -1,3 +1,4 @@
+import type { PlayerCosmetics } from '@config/cosmetics';
 import type { PlayerLoadout } from '@core/types';
 import type { MobileHUDConfig, PCControlConfig } from '@storage/profiles';
 
@@ -7,6 +8,7 @@ export interface AuthUser {
   loadout: PlayerLoadout;
   mobileHud: MobileHUDConfig | null;
   pcControls: PCControlConfig | null;
+  cosmetics: PlayerCosmetics | null;
 }
 
 const KEY_AUTH_TOKEN = 'hex_arena_p3_auth_token_v1';
@@ -58,6 +60,7 @@ export class AuthClient {
     currentLoadout: PlayerLoadout,
     currentMobileHud?: MobileHUDConfig,
     currentPcControls?: PCControlConfig,
+    currentCosmetics?: PlayerCosmetics,
   ): Promise<{ ok: true; user: AuthUser } | { ok: false; error: string }> {
     try {
       const res = await fetch('/api/auth/register', {
@@ -69,6 +72,7 @@ export class AuthClient {
           loadout: currentLoadout,
           mobileHud: currentMobileHud,
           pcControls: currentPcControls,
+          cosmetics: currentCosmetics,
         }),
       });
       const data = (await res.json()) as { token?: string; user?: AuthUser; error?: string };
@@ -143,6 +147,26 @@ export class AuthClient {
       const data = (await res.json()) as { mobileHud: MobileHUDConfig; pcControls: PCControlConfig };
       this.user.mobileHud = data.mobileHud;
       this.user.pcControls = data.pcControls;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  public async saveCosmeticsToAccount(cosmetics: PlayerCosmetics): Promise<boolean> {
+    if (!this.token || !this.user) return false;
+    try {
+      const res = await fetch('/api/cosmetics', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.token}`,
+        },
+        body: JSON.stringify({ cosmetics }),
+      });
+      if (!res.ok) return false;
+      const data = (await res.json()) as { cosmetics: PlayerCosmetics };
+      this.user.cosmetics = data.cosmetics;
       return true;
     } catch {
       return false;

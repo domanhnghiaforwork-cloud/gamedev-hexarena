@@ -42,6 +42,7 @@ export class LobbyScreen {
   private onJoinRoom: (code: string) => void;
   private onCancelRoom: () => void;
   private onOpenWeapons: (slot?: SlotKey) => void;
+  private onOpenCosmetics?: () => void;
   private onOpenSettings: () => void;
   private onOpenAuth: () => void;
   private onNotify: (msg: string) => void;
@@ -56,6 +57,7 @@ export class LobbyScreen {
     onJoinRoom: (code: string) => void;
     onCancelRoom: () => void;
     onOpenWeapons: (slot?: SlotKey) => void;
+    onOpenCosmetics?: () => void;
     onOpenSettings: () => void;
     onOpenAuth: () => void;
     onNotify: (msg: string) => void;
@@ -69,6 +71,7 @@ export class LobbyScreen {
     this.onJoinRoom = opts.onJoinRoom;
     this.onCancelRoom = opts.onCancelRoom;
     this.onOpenWeapons = opts.onOpenWeapons;
+    this.onOpenCosmetics = opts.onOpenCosmetics;
     this.onOpenSettings = opts.onOpenSettings;
     this.onOpenAuth = opts.onOpenAuth;
     this.onNotify = opts.onNotify;
@@ -198,7 +201,10 @@ export class LobbyScreen {
           <section class="lobby-card">
             <div class="lobby-panel-head">
               <span class="lobby-panel-title">Kho vũ khí</span>
-              <span class="lobby-panel-meta">${n} mảnh · 3 cấu hình</span>
+              <div class="lobby-panel-head-right">
+                <span class="lobby-panel-meta">${n} mảnh · 3 cấu hình</span>
+                <button id="lobbyCosmeticsBtn" class="btn xs ghost" type="button" title="Tùy chỉnh màu Neon &amp; hiệu ứng">Ngoại hình</button>
+              </div>
             </div>
 
             <div class="lobby-weapon-list four-rows">
@@ -248,6 +254,7 @@ export class LobbyScreen {
 
     this.mount.querySelector('#lobbyPlayBtn')?.addEventListener('click', () => this.onPlayBot());
     this.mount.querySelector('#lobbyWeaponsBtn')?.addEventListener('click', () => this.onOpenWeapons());
+    this.mount.querySelector('#lobbyCosmeticsBtn')?.addEventListener('click', () => this.onOpenCosmetics?.());
     this.mount.querySelector('#lobbyHexesRow')?.addEventListener('click', () => this.onOpenWeapons());
     this.mount.querySelector('#lobbySettingsBtn')?.addEventListener('click', () => this.onOpenSettings());
     this.mount.querySelector('#lobbyUserBtn')?.addEventListener('click', () => this.onOpenAuth());

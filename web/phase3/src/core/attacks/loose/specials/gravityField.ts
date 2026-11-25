@@ -25,6 +25,7 @@ export const GRAVITY_FIELD_SKILL: SpecialSkillDefinition = {
       color: GRAVITY_FIELD_SKILL.color,
       scale: 1.05,
     });
+    state.events.push({ type: 'sfx', kind: 'gravityField' });
     return true;
   },
   onExpire: ({ fighter }) => {

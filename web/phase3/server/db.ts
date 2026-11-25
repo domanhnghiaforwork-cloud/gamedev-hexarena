@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
+import { sanitizeCosmetics, type PlayerCosmetics } from '../src/config/cosmetics';
 import { sanitizeLoadout } from '../src/core/world/blueprint';
 import { createDefaultLoadout } from '../src/core/constants';
 import type { PlayerLoadout } from '../src/core/types';
@@ -19,6 +20,7 @@ export interface UserRecord {
   loadout: PlayerLoadout;
   mobileHud: MobileHUDConfig | null;
   pcControls: PCControlConfig | null;
+  cosmetics: PlayerCosmetics | null;
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -78,12 +80,13 @@ export class UserStore {
         loadout_json TEXT NOT NULL,
         mobile_hud_json TEXT,
         pc_controls_json TEXT,
+        cosmetics_json TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
     `);
 
-    // Backward-compatible migration for existing SQLite files created before control-config columns
+    // Backward-compatible migration for existing SQLite files created before control-config/cosmetics columns
     const cols = this.db.prepare('PRAGMA table_info(users)').all() as Array<{ name?: unknown }>;
     const colNames = new Set(cols.map((c) => String(c.name ?? '')));
     if (!colNames.has('mobile_hud_json')) {
@@ -91,6 +94,9 @@ export class UserStore {
     }
     if (!colNames.has('pc_controls_json')) {
       this.db.exec('ALTER TABLE users ADD COLUMN pc_controls_json TEXT;');
+    }
+    if (!colNames.has('cosmetics_json')) {
+      this.db.exec('ALTER TABLE users ADD COLUMN cosmetics_json TEXT;');
     }
   }
 
@@ -120,12 +126,22 @@ export class UserStore {
       }
     }
 
+    let cosmetics: PlayerCosmetics | null = null;
+    if (typeof row.cosmetics_json === 'string' && row.cosmetics_json.length > 0) {
+      try {
+        cosmetics = sanitizeCosmetics(JSON.parse(row.cosmetics_json));
+      } catch {
+        cosmetics = null;
+      }
+    }
+
     return {
       id: Number(row.id),
       username: String(row.username),
       loadout,
       mobileHud,
       pcControls,
+      cosmetics,
     };
   }
 
@@ -165,6 +181,7 @@ export class UserStore {
     initialLoadout?: unknown,
     initialMobileHud?: unknown,
     initialPcControls?: unknown,
+    initialCosmetics?: unknown,
   ): { ok: true; user: UserRecord; token: string } | { ok: false; error: string } {
     const username = rawUsername.trim();
     if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
@@ -185,10 +202,11 @@ export class UserStore {
     const cleanLoadout = initialLoadout ? sanitizeLoadout(initialLoadout) : createDefaultLoadout();
     const cleanMobileHud = initialMobileHud ? sanitizeMobileHUDConfig(initialMobileHud) : null;
     const cleanPcControls = initialPcControls ? sanitizePCControlConfig(initialPcControls) : null;
+    const cleanCosmetics = initialCosmetics ? sanitizeCosmetics(initialCosmetics) : null;
     const passHash = hashPassword(password);
     const res = this.db
       .prepare(
-        'INSERT INTO users (username, password_hash, loadout_json, mobile_hud_json, pc_controls_json) VALUES (?, ?, ?, ?, ?)',
+        'INSERT INTO users (username, password_hash, loadout_json, mobile_hud_json, pc_controls_json, cosmetics_json) VALUES (?, ?, ?, ?, ?, ?)',
       )
       .run(
         username,
@@ -196,6 +214,7 @@ export class UserStore {
         JSON.stringify(cleanLoadout),
         cleanMobileHud ? JSON.stringify(cleanMobileHud) : null,
         cleanPcControls ? JSON.stringify(cleanPcControls) : null,
+        cleanCosmetics ? JSON.stringify(cleanCosmetics) : null,
       );
 
     const id = Number(res.lastInsertRowid);
@@ -205,6 +224,7 @@ export class UserStore {
       loadout: cleanLoadout,
       mobileHud: cleanMobileHud,
       pcControls: cleanPcControls,
+      cosmetics: cleanCosmetics,
     };
     return { ok: true, user, token: this.createToken(id, username) };
   }
@@ -219,7 +239,7 @@ export class UserStore {
     }
 
     const row = this.db
-      .prepare('SELECT id, username, password_hash, loadout_json, mobile_hud_json, pc_controls_json FROM users WHERE username = ?')
+      .prepare('SELECT id, username, password_hash, loadout_json, mobile_hud_json, pc_controls_json, cosmetics_json FROM users WHERE username = ?')
       .get(username);
 
     if (!row || typeof row.password_hash !== 'string' || !verifyPassword(password, row.password_hash)) {
@@ -232,7 +252,7 @@ export class UserStore {
 
   public getById(id: number): UserRecord | null {
     const row = this.db
-      .prepare('SELECT id, username, loadout_json, mobile_hud_json, pc_controls_json FROM users WHERE id = ?')
+      .prepare('SELECT id, username, loadout_json, mobile_hud_json, pc_controls_json, cosmetics_json FROM users WHERE id = ?')
       .get(id);
     if (!row) return null;
     return this.parseRowToUser(row);
@@ -261,5 +281,14 @@ export class UserStore {
       .run(JSON.stringify(cleanMobileHud), JSON.stringify(cleanPcControls), id);
     if (Number(res.changes) === 0) return null;
     return { mobileHud: cleanMobileHud, pcControls: cleanPcControls };
+  }
+
+  public updateCosmetics(id: number, rawCosmetics: unknown): PlayerCosmetics | null {
+    const clean = sanitizeCosmetics(rawCosmetics);
+    const res = this.db
+      .prepare("UPDATE users SET cosmetics_json = ?, updated_at = datetime('now') WHERE id = ?")
+      .run(JSON.stringify(clean), id);
+    if (Number(res.changes) === 0) return null;
+    return clean;
   }
 }

@@ -1,4 +1,5 @@
 import { updateBotAI } from '@ai/botController';
+import type { PlayerCosmetics } from '@config/cosmetics';
 import { applyTypographyToDocument, ensureFontsLoaded } from '@config/typography';
 import { FIXED_DT, createDefaultLoadout } from '@core/constants';
 import { createMatchState, stepSimulation } from '@core/physics/simulation';
@@ -11,16 +12,22 @@ import { PvPClient } from '@net/pvpClient';
 import { PvPInterpolator } from '@net/pvpInterpolator';
 import { GameRenderer } from '@render/renderer';
 import {
+  loadAudioSettings,
   loadMobileHUDConfig,
   loadPCControlConfig,
+  loadPlayerCosmetics,
   loadPlayerLoadout,
+  saveAudioSettings,
   saveMobileHUDConfig,
   savePCControlConfig,
+  savePlayerCosmetics,
   savePlayerLoadout,
+  type AudioSettings,
   type MobileHUDConfig,
   type PCControlConfig,
 } from '@storage/profiles';
 import { AuthModal, renderSettingsModal } from '@ui/modals/authModal';
+import { CosmeticsModal } from '@ui/modals/cosmeticsModal';
 import {
   FULLSCREEN_CHANGE_EVENT,
   isDocumentFullscreen,
@@ -44,6 +51,15 @@ const authClient = new AuthClient();
 let playerLoadout: PlayerLoadout = loadPlayerLoadout();
 let mobileHUDConfig: MobileHUDConfig = loadMobileHUDConfig();
 let pcControlConfig: PCControlConfig = loadPCControlConfig();
+let audioSettings: AudioSettings = loadAudioSettings();
+let playerCosmetics: PlayerCosmetics = loadPlayerCosmetics();
+soundFX.applySettings(audioSettings);
+
+const unlockAudioOnce = () => {
+  soundFX.init();
+};
+window.addEventListener('pointerdown', unlockAudioOnce, { once: true, capture: true });
+window.addEventListener('keydown', unlockAudioOnce, { once: true, capture: true });
 
 // Check deep-link ?room=XXXX invite param on startup
 const urlRoom = new URLSearchParams(window.location.search).get('room')?.trim().toUpperCase() || '';
@@ -73,6 +89,7 @@ let activeLoadoutModal: LoadoutEditorModal | null = null;
 let activePvPRoomModal: PvPRoomModal | null = null;
 let activeCustomizer: HUDCustomizerController | null = null;
 let activeAuthModal: AuthModal | null = null;
+let activeCosmeticsModal: CosmeticsModal | null = null;
 let settingsOpen = false;
 let helpOpen = false;
 
@@ -193,6 +210,8 @@ const pvpClient = new PvPClient({
     const oppName = msg.seat === 'player' ? msg.guestName : msg.hostName;
 
     renderer.vfx.clear();
+    soundFX.setBgmMode('match');
+    soundFX.setMatchTension(0);
     topBar.hideMatchOver();
     topBar.setPlayerName(authClient.user?.username ?? selfName);
     topBar.setMatchModeLabel(true, msg.code, oppName);
@@ -298,8 +317,10 @@ const topBar = new TopBarController({
   onOpenSettings: () => openSettingsModal(),
   onToggleMode: () => toggleInputMode(),
   onToggleSound: () => {
-    soundFX.enabled = !soundFX.enabled;
-    return soundFX.enabled;
+    audioSettings = { ...audioSettings, enabled: !audioSettings.enabled };
+    soundFX.applySettings(audioSettings);
+    saveAudioSettings(audioSettings);
+    return audioSettings.enabled;
   },
   onOpenHelp: () => openHelpModal(),
   onShowIOSGuide: () => showIOSFullscreenGuide(),
@@ -337,6 +358,7 @@ const lobby = new LobbyScreen({
     refreshLobbyIfVisible();
   },
   onOpenWeapons: (slot?: SlotKey) => openLoadoutEditor(slot),
+  onOpenCosmetics: () => openCosmeticsModal(),
   onOpenSettings: () => openSettingsModal(),
   onOpenAuth: () => {
     if (authClient.user) openSettingsModal();
@@ -379,6 +401,7 @@ function hasModalOpen(): boolean {
     activePvPRoomModal !== null ||
     activeCustomizer !== null ||
     activeAuthModal !== null ||
+    activeCosmeticsModal !== null ||
     settingsOpen ||
     helpOpen
   );
@@ -417,6 +440,10 @@ function clearModalRefs(): void {
     activeAuthModal.destroy();
     activeAuthModal = null;
   }
+  if (activeCosmeticsModal) {
+    activeCosmeticsModal.destroy();
+    activeCosmeticsModal = null;
+  }
   settingsOpen = false;
   helpOpen = false;
   modalRoot.innerHTML = '';
@@ -441,6 +468,8 @@ function enterLobby(): void {
   pvpInterpolator.reset();
   clearModalRefs();
   inLobby = true;
+  soundFX.setBgmMode('lobby');
+  soundFX.setMatchTension(0);
   topBar.setVisible(false);
   topBar.hideCountdown();
   topBar.hideMatchOver();
@@ -461,6 +490,8 @@ function startNewBotMatch(): void {
   lobby.hide();
   state = createMatchState(playerLoadout, createDefaultLoadout(), Math.random, true);
   renderer.vfx.clear();
+  soundFX.setBgmMode('match');
+  soundFX.setMatchTension(0);
   topBar.hideMatchOver();
   topBar.setPlayerName(authClient.user?.username ?? null);
   topBar.setMatchModeLabel(false);
@@ -476,6 +507,7 @@ function applyAccountProfile(user: {
   loadout: PlayerLoadout;
   mobileHud: MobileHUDConfig | null;
   pcControls: PCControlConfig | null;
+  cosmetics: PlayerCosmetics | null;
 }): void {
   playerLoadout = user.loadout;
   savePlayerLoadout(playerLoadout);
@@ -486,6 +518,10 @@ function applyAccountProfile(user: {
   if (user.pcControls) {
     pcControlConfig = user.pcControls;
     savePCControlConfig(pcControlConfig);
+  }
+  if (user.cosmetics) {
+    playerCosmetics = user.cosmetics;
+    savePlayerCosmetics(playerCosmetics);
   }
   topBar.setPlayerName(user.username);
   input.recomputeLayouts();
@@ -509,7 +545,14 @@ function openAuthModal(initialTab: 'login' | 'register' = 'login'): void {
       return null;
     },
     onRegister: async (username, password) => {
-      const res = await authClient.register(username, password, playerLoadout, mobileHUDConfig, pcControlConfig);
+      const res = await authClient.register(
+        username,
+        password,
+        playerLoadout,
+        mobileHUDConfig,
+        pcControlConfig,
+        playerCosmetics,
+      );
       if (!res.ok) return res.error;
       applyAccountProfile(res.user);
       closeAllModals();
@@ -532,15 +575,23 @@ function openSettingsModal(): void {
       mount: modalRoot,
       user: authClient.user,
       mode: input.live.mode,
-      soundEnabled: soundFX.enabled,
+      audioSettings,
       onOpenControls: () => openHUDCustomizer(),
+      onOpenCosmetics: () => openCosmeticsModal(),
       onToggleMode: () => {
         toggleInputMode();
         rerender();
       },
-      onToggleSound: () => {
-        soundFX.enabled = !soundFX.enabled;
-        rerender();
+      onAudioChange: (next) => {
+        const toggledMute = next.enabled !== audioSettings.enabled;
+        audioSettings = next;
+        soundFX.applySettings(audioSettings);
+        saveAudioSettings(audioSettings);
+        if (toggledMute) rerender();
+      },
+      onTestSound: () => {
+        soundFX.init();
+        soundFX.play('clashSharp');
       },
       onOpenHelp: () => openHelpModal(),
       onOpenAuth: () => openAuthModal('login'),
@@ -554,6 +605,33 @@ function openSettingsModal(): void {
     });
   };
   rerender();
+}
+
+function openCosmeticsModal(): void {
+  const wasLobby = inLobby;
+  clearModalRefs();
+  if (wasLobby) lobby.hide();
+  input.setPaused(true);
+
+  activeCosmeticsModal = new CosmeticsModal({
+    mount: modalRoot,
+    initial: playerCosmetics,
+    onSave: async (next) => {
+      playerCosmetics = next;
+      savePlayerCosmetics(playerCosmetics);
+      let synced = false;
+      if (authClient.user) {
+        synced = await authClient.saveCosmeticsToAccount(playerCosmetics);
+      }
+      closeAllModals();
+      topBar.showToast(
+        synced
+          ? `Đã lưu ngoại hình lên tài khoản ${authClient.user?.username}.`
+          : 'Đã áp dụng ngoại hình mới.',
+      );
+    },
+    onClose: () => closeAllModals(),
+  });
 }
 
 function openLoadoutEditor(initialSlot?: SlotKey): void {
@@ -641,7 +719,7 @@ function openHelpModal(): void {
 
 function handleSimEvents(events: SimEvent[]): void {
   if (events.length === 0) return;
-  renderer.vfx.ingestEvents(events);
+  renderer.vfx.ingestEvents(events, playerCosmetics);
   for (const ev of events) {
     if (ev.type === 'sfx') soundFX.play(ev.kind);
     else if (ev.type === 'haptic') triggerHaptic(ev.pattern);
@@ -742,6 +820,12 @@ function gameLoop(now: number): void {
   const activePC = activeCustomizer ? activeCustomizer.draftPC : pcControlConfig;
   if (!inLobby) {
     topBar.syncFrame(state, activePC);
+    const minHpRatio = Math.min(
+      state.player.hp / Math.max(1, state.player.maxHp),
+      state.enemy.hp / Math.max(1, state.enemy.maxHp),
+    );
+    const tension = !state.matchOver && minHpRatio <= 0.30 ? Math.min(1, (0.30 - minHpRatio) / 0.25) : 0;
+    soundFX.setMatchTension(tension);
   }
 
   const mobileEditOpts =
@@ -753,7 +837,15 @@ function gameLoop(now: number): void {
         }
       : undefined;
 
-  renderer.renderFrame(state, input.live, activePC, now / 1000, mobileEditOpts, inLobby && !mobileEditOpts);
+  renderer.renderFrame(
+    state,
+    input.live,
+    activePC,
+    now / 1000,
+    mobileEditOpts,
+    inLobby && !mobileEditOpts,
+    playerCosmetics,
+  );
   requestAnimationFrame(gameLoop);
 }
 

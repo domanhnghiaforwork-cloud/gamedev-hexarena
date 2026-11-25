@@ -1,3 +1,4 @@
+import { DEFAULT_COSMETICS, getNeonTheme, type PlayerCosmetics } from '@config/cosmetics';
 import { canvasFont } from '@config/typography';
 import { AXIAL_DIRS, BASE_HEX_RADIUS, PLAYER_RADIUS } from '@core/constants';
 import { axialKey, axialToLocal, clamp } from '@core/math/hexMath';
@@ -10,25 +11,33 @@ import {
 import type { Fighter, HexEntity } from '@core/types';
 import { drawHexPolygon } from './arenaRenderer';
 
-export function renderGravityField(ctx: CanvasRenderingContext2D, f: Fighter, nowSec: number): void {
+export function renderGravityField(
+  ctx: CanvasRenderingContext2D,
+  f: Fighter,
+  nowSec: number,
+  playerCosmetics: PlayerCosmetics = DEFAULT_COSMETICS,
+): void {
   if (f.specialActive?.type !== 'loose') return;
   const fieldR = getLooseGravityFieldRadius(f);
   const orbitR = getLooseOrbitRadius(f);
+  const isPlayer = f.id === 'player';
+  const ringColor = isPlayer ? getNeonTheme(playerCosmetics.neonTheme).main : '#fb7185';
+  const fillRgba = isPlayer ? 'rgba(56, 189, 248,' : 'rgba(251, 113, 133,';
 
   ctx.save();
   // Gravity well gradient fill spanning from fighter body edge to expanded outer boundary (+30%)
   const grad = ctx.createRadialGradient(f.x, f.y, PLAYER_RADIUS * 0.9, f.x, f.y, fieldR);
-  grad.addColorStop(0, 'rgba(56, 189, 248, 0.05)');
-  grad.addColorStop(0.55, 'rgba(56, 189, 248, 0.14)');
-  grad.addColorStop(0.92, 'rgba(14, 165, 233, 0.22)');
-  grad.addColorStop(1, 'rgba(56, 189, 248, 0.04)');
+  grad.addColorStop(0, `${fillRgba} 0.04)`);
+  grad.addColorStop(0.55, `${fillRgba} 0.14)`);
+  grad.addColorStop(0.92, `${fillRgba} 0.24)`);
+  grad.addColorStop(1, `${fillRgba} 0.04)`);
   ctx.fillStyle = grad;
   ctx.beginPath();
   ctx.arc(f.x, f.y, fieldR, 0, Math.PI * 2);
   ctx.fill();
 
   // Middle orbit guide ring where loose shards spin
-  ctx.strokeStyle = 'rgba(125, 211, 252, 0.34)';
+  ctx.strokeStyle = isPlayer ? 'rgba(186, 230, 253, 0.36)' : 'rgba(254, 205, 211, 0.36)';
   ctx.lineWidth = 1.6;
   ctx.setLineDash([7, 7]);
   ctx.lineDashOffset = -nowSec * 65;
@@ -37,7 +46,8 @@ export function renderGravityField(ctx: CanvasRenderingContext2D, f: Fighter, no
   ctx.stroke();
 
   // Outer gravity boundary ring (-50% enemy physical entity speed zone)
-  ctx.strokeStyle = 'rgba(56, 189, 248, 0.65)';
+  ctx.strokeStyle = ringColor;
+  ctx.globalAlpha = 0.72;
   ctx.lineWidth = 2.6;
   ctx.setLineDash([14, 8]);
   ctx.lineDashOffset = nowSec * 48;
@@ -45,12 +55,26 @@ export function renderGravityField(ctx: CanvasRenderingContext2D, f: Fighter, no
   ctx.arc(f.x, f.y, fieldR, 0, Math.PI * 2);
   ctx.stroke();
 
+  // Orbiting gravitational motes pulled gently inward
+  ctx.setLineDash([]);
+  ctx.fillStyle = ringColor;
+  for (let i = 0; i < 6; i++) {
+    const a = nowSec * 1.4 + (i * Math.PI) / 3;
+    const radialFrac = 0.58 + 0.32 * (1 - ((nowSec * 0.65 + i * 0.17) % 1));
+    const mx = f.x + Math.cos(a) * fieldR * radialFrac;
+    const my = f.y + Math.sin(a) * fieldR * radialFrac;
+    ctx.globalAlpha = 0.55;
+    ctx.beginPath();
+    ctx.arc(mx, my, 2.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
   // Subtle inward gravity ripple pulse
   const pulseT = (nowSec * 0.75) % 1;
   const pulseR = fieldR - (fieldR - PLAYER_RADIUS) * pulseT;
-  ctx.setLineDash([]);
-  ctx.strokeStyle = `rgba(186, 230, 253, ${(1 - pulseT) * 0.26})`;
-  ctx.lineWidth = 1.4;
+  ctx.strokeStyle = isPlayer ? `rgba(186, 230, 253, ${(1 - pulseT) * 0.30})` : `rgba(254, 205, 211, ${(1 - pulseT) * 0.30})`;
+  ctx.globalAlpha = 1;
+  ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.arc(f.x, f.y, pulseR, 0, Math.PI * 2);
   ctx.stroke();
@@ -61,30 +85,62 @@ export function renderFighterBody(
   ctx: CanvasRenderingContext2D,
   f: Fighter,
   nowSec: number,
-  isSlowed = false
+  isSlowed = false,
+  playerCosmetics: PlayerCosmetics = DEFAULT_COSMETICS,
 ): void {
   const isPlayer = f.id === 'player';
-  const mainColor = isPlayer ? '#38bdf8' : '#fb7185';
-  const lightColor = isPlayer ? '#bae6fd' : '#fecdd3';
+  const theme = isPlayer ? getNeonTheme(playerCosmetics.neonTheme) : null;
+  const mainColor = theme ? theme.main : '#fb7185';
+  const lightColor = theme ? theme.light : '#fecdd3';
+  const bodyFill = theme ? theme.bodyFillRgba : 'rgba(251, 113, 133, 0.11)';
+  const dashTrail = isPlayer ? playerCosmetics.dashTrail : 'ghost';
 
-  // Dash afterimages
-  for (const img of f.dashAfterimages) {
-    const a = clamp(img.life / img.maxLife, 0, 1);
-    ctx.save();
-    ctx.globalAlpha = a * 0.45;
-    ctx.strokeStyle = mainColor;
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    ctx.arc(img.x, img.y, PLAYER_RADIUS * (0.75 + 0.25 * a), 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
+  // Cosmetic Dash Afterimages
+  if (f.dashAfterimages.length > 0) {
+    if (dashTrail === 'bolt') {
+      ctx.save();
+      ctx.strokeStyle = mainColor;
+      ctx.lineWidth = 2.6;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      f.dashAfterimages.forEach((img, idx) => {
+        const jx = img.x + Math.sin(nowSec * 45 + idx * 3.1) * 5;
+        const jy = img.y + Math.cos(nowSec * 41 + idx * 2.3) * 5;
+        if (idx === 0) ctx.moveTo(jx, jy);
+        else ctx.lineTo(jx, jy);
+      });
+      ctx.lineTo(f.x, f.y);
+      ctx.globalAlpha = 0.75;
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    const prismPalette = ['#38bdf8', '#c084fc', '#fbbf24'];
+    f.dashAfterimages.forEach((img, idx) => {
+      const a = clamp(img.life / img.maxLife, 0, 1);
+      ctx.save();
+      ctx.globalAlpha = a * 0.52;
+      if (dashTrail === 'hex-wake') {
+        ctx.strokeStyle = mainColor;
+        ctx.lineWidth = 2.3;
+        drawHexPolygon(ctx, img.x, img.y, PLAYER_RADIUS * (0.72 + 0.25 * a), nowSec * 4 + idx * 0.5);
+        ctx.stroke();
+      } else {
+        ctx.strokeStyle = dashTrail === 'prism' ? prismPalette[idx % prismPalette.length] : mainColor;
+        ctx.lineWidth = dashTrail === 'prism' ? 3.0 : 2.5;
+        ctx.beginPath();
+        ctx.arc(img.x, img.y, PLAYER_RADIUS * (0.75 + 0.25 * a), 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.restore();
+    });
   }
 
   // Ground Hitbox Ring (PLAYER_RADIUS = 32)
   ctx.save();
   ctx.beginPath();
   ctx.arc(f.x, f.y, PLAYER_RADIUS, 0, Math.PI * 2);
-  ctx.fillStyle = isPlayer ? 'rgba(56, 189, 248, 0.11)' : 'rgba(251, 113, 133, 0.11)';
+  ctx.fillStyle = bodyFill;
   ctx.fill();
   ctx.strokeStyle = f.damageFlash > 0 ? '#ffffff' : mainColor;
   ctx.lineWidth = 2.4;
@@ -111,12 +167,33 @@ export function renderFighterBody(
     ctx.restore();
   }
 
-  // Special Skill active rings around Fighter
+  // Special Skill active visual signatures around Fighter
   if (f.specialActive) {
     const sp = f.specialActive;
     const progress = clamp(sp.timer / Math.max(0.01, sp.maxTimer), 0, 1);
-    if (sp.type === 'loose') {
-      // Gravity field & middle orbit are drawn by renderGravityField beneath entities
+    if (sp.type === 'melee') {
+      // Rotating golden parry brackets
+      ctx.save();
+      ctx.strokeStyle = 'rgba(251, 191, 36, 0.80)';
+      ctx.lineWidth = 2.4;
+      for (let i = 0; i < 4; i++) {
+        const a0 = nowSec * 3.4 + (i * Math.PI) / 2;
+        ctx.beginPath();
+        ctx.arc(f.x, f.y, PLAYER_RADIUS + 10, a0, a0 + 0.48);
+        ctx.stroke();
+      }
+      ctx.restore();
+    } else if (sp.type === 'ranged') {
+      // Violet plasma halo ring
+      ctx.save();
+      ctx.strokeStyle = 'rgba(192, 132, 252, 0.65)';
+      ctx.lineWidth = 2.0;
+      ctx.setLineDash([8, 6]);
+      ctx.lineDashOffset = -nowSec * 42;
+      ctx.beginPath();
+      ctx.arc(f.x, f.y, PLAYER_RADIUS + 9, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
     } else if (sp.type === 'defense') {
       const stored = sp.storedEnergy ?? 0;
       const chargeRatio = clamp(stored / 360, 0, 1);
@@ -138,7 +215,7 @@ export function renderFighterBody(
 
     // Active special duration arc around character
     const spColor =
-      sp.type === 'loose' ? '#38bdf8' : sp.type === 'melee' ? '#fbbf24' : sp.type === 'ranged' ? '#c084fc' : '#34d399';
+      sp.type === 'loose' ? mainColor : sp.type === 'melee' ? '#fbbf24' : sp.type === 'ranged' ? '#c084fc' : '#34d399';
     ctx.strokeStyle = spColor;
     ctx.lineWidth = 3;
     ctx.beginPath();
@@ -146,10 +223,15 @@ export function renderFighterBody(
     ctx.stroke();
   }
 
-  // 2.5D Sphere Drop Shadow
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.36)';
+  // Dual-layer 2.5D Sphere Drop Shadow
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.22)';
   ctx.beginPath();
-  ctx.ellipse(f.x + 2, f.y + 8, 17, 11, 0, 0, Math.PI * 2);
+  ctx.ellipse(f.x + 3, f.y + 10, 21, 13, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.40)';
+  ctx.beginPath();
+  ctx.ellipse(f.x + 2, f.y + 7, 15.5, 9.5, 0, 0, Math.PI * 2);
   ctx.fill();
 
   // Elevated Glowing Sphere Core
@@ -256,10 +338,32 @@ export function renderFighterHexLayer(
   highFlightOnly: boolean,
   nowSec: number,
   hoverPlantedHexId = -1,
+  playerCosmetics: PlayerCosmetics = DEFAULT_COSMETICS,
 ): void {
   const isPlayer = f.id === 'player';
-  const baseColor = isPlayer ? '#38bdf8' : '#fb7185';
+  const theme = isPlayer ? getNeonTheme(playerCosmetics.neonTheme) : null;
+  const baseColor = theme ? theme.main : '#fb7185';
+  const baseFillRgba = theme ? theme.fillRgba : 'rgba(190, 18, 60, 0.34)';
   const R = BASE_HEX_RADIUS * f.currentScale;
+
+  // Melee Swept Cleave Energy Arc
+  if (!highFlightOnly && f.attackAnim?.type === 'melee' && !f.attackAnim.wallBlocked) {
+    const anim = f.attackAnim;
+    const p = clamp(anim.timer / Math.max(0.01, anim.duration), 0, 1);
+    const curAng = anim.startAngle + (anim.endAngle - anim.startAngle) * p;
+    const arcR = PLAYER_RADIUS + R * 3.1;
+    ctx.save();
+    ctx.strokeStyle = anim.empoweredParry ? 'rgba(251, 191, 36, 0.42)' : theme ? theme.glowRgba : 'rgba(251, 113, 133, 0.38)';
+    ctx.lineWidth = R * 1.15;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.arc(f.x, f.y, arcR, anim.startAngle, curAng);
+    ctx.stroke();
+    ctx.strokeStyle = anim.empoweredParry ? 'rgba(254, 240, 138, 0.72)' : 'rgba(255, 255, 255, 0.45)';
+    ctx.lineWidth = 2.2;
+    ctx.stroke();
+    ctx.restore();
+  }
 
   // Draw Guided Ranged Weapon Dashed Target Silhouette (dynamic for ANY 5..10 hex blueprint!)
   if (
@@ -298,8 +402,16 @@ export function renderFighterHexLayer(
         ctx.stroke();
       }
 
-      // Status tag ("BAY QUA" / "LÁI" / "TỰ ĐỘNG" + countdown)
+      // Status tag ("BAY QUA" / "LÁI" / "TỰ ĐỘNG" + countdown) + rotating diamond lock reticle
       ctx.setLineDash([]);
+      ctx.save();
+      ctx.translate(anim.targetX, anim.targetY);
+      ctx.rotate(nowSec * 2.5);
+      ctx.strokeStyle = anim.isManualSteer ? '#f0abfc' : '#c084fc';
+      ctx.lineWidth = 1.6;
+      ctx.strokeRect(-7, -7, 14, 14);
+      ctx.restore();
+
       const rem = f.specialActive ? f.specialActive.timer.toFixed(1) : '0.0';
       const label = anim.hasCmd
         ? `BAY QUA · ${rem}s`
@@ -314,29 +426,56 @@ export function renderFighterHexLayer(
     }
   }
 
-  // Edge-Weld Glow lines between adjacent assembled hexes (ground layer only)
+  // Two-pass Glowing Edge-Weld Bridges between adjacent assembled hexes (ground layer only)
   if (!highFlightOnly && f.form !== 'loose') {
     const assembled = f.hexes.filter((h) => h.state === 'ASSEMBLED');
     const byKey = new Map<string, HexEntity>();
     for (const h of assembled) byKey.set(axialKey(h.q, h.r), h);
 
-    ctx.save();
-    ctx.strokeStyle = f.specialActive?.type === 'defense' ? '#34d399' : baseColor;
-    ctx.globalAlpha = 0.65;
-    ctx.lineWidth = Math.max(2, R * 0.16);
+    const weldColor =
+      f.specialActive?.type === 'defense'
+        ? '#34d399'
+        : f.specialActive?.type === 'melee'
+          ? '#fbbf24'
+          : f.specialActive?.type === 'ranged'
+            ? '#c084fc'
+            : baseColor;
+    const pulse = 0.72 + 0.22 * Math.sin(nowSec * 7);
+
+    const pairs: Array<[HexEntity, HexEntity]> = [];
     for (const h of assembled) {
       for (let i = 0; i < 3; i++) {
         const d = AXIAL_DIRS[i * 2];
         const nb = byKey.get(axialKey(h.q + d.q, h.r + d.r));
-        if (nb) {
-          ctx.beginPath();
-          ctx.moveTo(h.x, h.y);
-          ctx.lineTo(nb.x, nb.y);
-          ctx.stroke();
-        }
+        if (nb) pairs.push([h, nb]);
       }
     }
-    ctx.restore();
+
+    if (pairs.length > 0) {
+      ctx.save();
+      ctx.lineCap = 'round';
+      // Pass 1: Soft outer energy halo
+      ctx.strokeStyle = weldColor;
+      ctx.globalAlpha = 0.30 * pulse;
+      ctx.lineWidth = Math.max(4.5, R * 0.36);
+      for (const [h, nb] of pairs) {
+        ctx.beginPath();
+        ctx.moveTo(h.x, h.y);
+        ctx.lineTo(nb.x, nb.y);
+        ctx.stroke();
+      }
+      // Pass 2: Bright inner weld core
+      ctx.strokeStyle = '#f8fafc';
+      ctx.globalAlpha = 0.78 * pulse;
+      ctx.lineWidth = Math.max(1.6, R * 0.13);
+      for (const [h, nb] of pairs) {
+        ctx.beginPath();
+        ctx.moveTo(h.x, h.y);
+        ctx.lineTo(nb.x, nb.y);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
   }
 
   for (const h of f.hexes) {
@@ -344,20 +483,25 @@ export function renderFighterHexLayer(
     const isHigh = h.altitude > 0.35;
     if (isHigh !== highFlightOnly) continue;
 
-    // Motion trail
+    // Smooth Two-Pass Luminous Motion Trail
     if (h.trail.length > 1) {
       ctx.save();
       const trailColor =
         isHexStolen(h) ? '#fbbf24' : h.state === 'RECALLING' ? '#fbbf24' : baseColor;
-      ctx.strokeStyle = trailColor;
       ctx.lineCap = 'round';
       for (let i = 1; i < h.trail.length; i++) {
         const frac = i / h.trail.length;
-        ctx.globalAlpha = frac * 0.42;
-        ctx.lineWidth = R * 0.65 * frac;
+        ctx.strokeStyle = trailColor;
+        ctx.globalAlpha = frac * 0.34;
+        ctx.lineWidth = R * 0.85 * frac;
         ctx.beginPath();
         ctx.moveTo(h.trail[i - 1].x, h.trail[i - 1].y - h.altitude * 18);
         ctx.lineTo(h.trail[i].x, h.trail[i].y - h.altitude * 18);
+        ctx.stroke();
+
+        ctx.strokeStyle = '#ffffff';
+        ctx.globalAlpha = frac * 0.24;
+        ctx.lineWidth = R * 0.24 * frac;
         ctx.stroke();
       }
       ctx.restore();
@@ -380,19 +524,22 @@ export function renderFighterHexLayer(
     const drawX = h.x;
     const drawY = h.y - liftY;
 
-    // Drop shadow
+    // 2.5D Dual-Layer Drop Shadow (expands softly when lifted during High-Flight Recall)
     ctx.save();
-    ctx.fillStyle = `rgba(0, 0, 0, ${0.28 + h.altitude * 0.16})`;
-    drawHexPolygon(ctx, h.x + 3 + h.altitude * 6, h.y + 6 + h.altitude * 10, R * (0.94 - h.altitude * 0.12), h.spinAngle + Math.PI / 6);
+    ctx.fillStyle = `rgba(0, 0, 0, ${0.18 + h.altitude * 0.10})`;
+    drawHexPolygon(ctx, h.x + 5 + h.altitude * 9, h.y + 8 + h.altitude * 14, R * (1.02 - h.altitude * 0.08), h.spinAngle + Math.PI / 6);
+    ctx.fill();
+    ctx.fillStyle = `rgba(0, 0, 0, ${0.32 + h.altitude * 0.12})`;
+    drawHexPolygon(ctx, h.x + 2.5 + h.altitude * 5, h.y + 5 + h.altitude * 8, R * (0.90 - h.altitude * 0.14), h.spinAngle + Math.PI / 6);
     ctx.fill();
     ctx.restore();
 
     // Determine stroke/fill colors by faction & state
     let strokeColor = baseColor;
-    let fillColor = isPlayer ? 'rgba(14, 116, 144, 0.34)' : 'rgba(190, 18, 60, 0.34)';
+    let fillColor = baseFillRgba;
     if (isHexStolen(h)) {
       const thiefIsPlayer = h.stolenById === 'player';
-      strokeColor = thiefIsPlayer ? '#38bdf8' : '#fb7185';
+      strokeColor = thiefIsPlayer ? baseColor : '#fb7185';
       fillColor = 'rgba(245, 158, 11, 0.36)';
     } else if (h.state === 'PLANTED' || h.state === 'RECALLING') {
       strokeColor = '#fbbf24';

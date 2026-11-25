@@ -23,7 +23,13 @@ import {
   isHexStolen,
   runStructuralBFSAndReassemble,
 } from '../world/structure';
-import type { Fighter, HexEntity, MatchState } from '../types';
+import type { Fighter, HexEntity, MatchState, SfxKind } from '../types';
+
+function clashSfxForHexes(a: HexEntity, b: HexEntity): SfxKind {
+  if (a.material.id === 'heavy' || b.material.id === 'heavy') return 'clashHeavy';
+  if (a.material.id === 'sharp' || b.material.id === 'sharp') return 'clashSharp';
+  return 'clash';
+}
 
 export function applyHexDurabilityLoss(
   state: MatchState,
@@ -140,7 +146,7 @@ export function damageHex(
 
   const shattered = applyHexDurabilityLoss(state, attacker, defender, defHex, primaryDmg, true);
   if (!shattered) {
-    state.events.push({ type: 'sfx', kind: 'clash' });
+    state.events.push({ type: 'sfx', kind: clashSfxForHexes(attHex, defHex) });
     if (attacker.currentScale <= 0.65) {
       state.hitStopTimer = Math.max(state.hitStopTimer, 0.028);
       state.events.push({ type: 'hitStop', duration: 0.028 });
@@ -208,11 +214,24 @@ export function damageFighterBody(
       scale: 0.95,
     });
     state.events.push({ type: 'shake', amount: 4 });
-    state.events.push({ type: 'sfx', kind: 'clash' });
+    state.events.push({ type: 'sfx', kind: clashSfxForHexes(attHex, attHex) });
   }
 
-  if (attacker.id === 'player') state.stats.dmgDealt += dmg;
-  else state.stats.enemyDmg += dmg;
+  const mode = attHex.state === 'STOLEN_FLY' || attHex.state === 'STOLEN_RETURN'
+    ? 'melee'
+    : attacker.form === 'loose'
+      ? 'loose'
+      : getActiveStance(attacker) ?? 'melee';
+
+  if (attacker.id === 'player') {
+    state.stats.dmgDealt += dmg;
+    state.stats.playerHits++;
+    state.stats.playerDmgByMode[mode] += dmg;
+  } else {
+    state.stats.enemyDmg += dmg;
+    state.stats.enemyHits++;
+    state.stats.enemyDmgByMode[mode] += dmg;
+  }
 
   if (defender.hp <= 0) {
     state.matchOver = true;
@@ -435,7 +454,7 @@ export function resolveCombatCollisions(state: MatchState): void {
           state.hitStopTimer = Math.max(state.hitStopTimer, 0.032);
           state.events.push({ type: 'hitStop', duration: 0.032 });
           state.events.push({ type: 'shake', amount: 5.5 });
-          state.events.push({ type: 'sfx', kind: 'clash' });
+          state.events.push({ type: 'sfx', kind: clashSfxForHexes(ah, dh) });
           break;
         } else {
           // Rule 3 Scenario 3: Pierced with Attenuation
@@ -645,7 +664,7 @@ export function resolveCombatCollisions(state: MatchState): void {
             speed: 170,
             size: 2.5,
           });
-          state.events.push({ type: 'sfx', kind: 'clash' });
+          state.events.push({ type: 'sfx', kind: clashSfxForHexes(ah, dh) });
           blockedByHex = true;
           break;
         }
@@ -682,7 +701,7 @@ export function resolveCombatCollisions(state: MatchState): void {
               def.kbY += Math.sin(kbAng) * 320;
               state.events.push({ type: 'sparks', x: def.x, y: def.y, color: '#34d399', count: 10, speed: 220, size: 3.0 });
               state.events.push({ type: 'floatingText', x: def.x, y: def.y - 24, text: 'ĐẨY LÙI!', color: '#34d399', scale: 0.95 });
-              state.events.push({ type: 'sfx', kind: 'clash' });
+              state.events.push({ type: 'sfx', kind: clashSfxForHexes(ah, ah) });
             } else {
               damageFighterBody(state, att, ah, def, 1.05 * attackDmgMult);
             }

@@ -1,3 +1,4 @@
+import { DEFAULT_COSMETICS, sanitizeCosmetics, type PlayerCosmetics } from '@config/cosmetics';
 import { createDefaultLoadout } from '@core/constants';
 import { sanitizeLoadout } from '@core/world/blueprint';
 import { clamp } from '@core/math/hexMath';
@@ -64,7 +65,23 @@ export interface PCControlConfig {
 const KEY_LOADOUT = 'hex_arena_p3_loadout_v1';
 const KEY_MOBILE_HUD = 'hex_arena_p3_mobile_hud_v1';
 const KEY_PC_CONTROLS = 'hex_arena_p3_pc_controls_v1';
+const KEY_AUDIO = 'hex_arena_p3_audio_v1';
+const KEY_COSMETICS = 'hex_arena_p3_cosmetics_v1';
 export const MOBILE_HUD_VERSION = 2;
+
+export interface AudioSettings {
+  enabled: boolean;
+  masterVolume: number; // 0..1
+  sfxVolume: number;    // 0..1
+  bgmVolume: number;    // 0..1
+}
+
+export const DEFAULT_AUDIO_SETTINGS: AudioSettings = {
+  enabled: true,
+  masterVolume: 1.0,
+  sfxVolume: 1.0,
+  bgmVolume: 0.45,
+};
 
 export const DEFAULT_PC_KEYBINDS: PCKeybindMap = {
   moveUp: 'w',
@@ -309,6 +326,62 @@ export function loadPCControlConfig(): PCControlConfig {
 export function savePCControlConfig(cfg: PCControlConfig): void {
   try {
     localStorage.setItem(KEY_PC_CONTROLS, JSON.stringify(sanitizePCControlConfig(cfg)));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+export function sanitizeAudioSettings(raw: unknown): AudioSettings {
+  if (!raw || typeof raw !== 'object') return { ...DEFAULT_AUDIO_SETTINGS };
+  const p = raw as Partial<AudioSettings>;
+  return {
+    enabled: typeof p.enabled === 'boolean' ? p.enabled : DEFAULT_AUDIO_SETTINGS.enabled,
+    masterVolume:
+      typeof p.masterVolume === 'number' && Number.isFinite(p.masterVolume)
+        ? clamp(p.masterVolume, 0, 1)
+        : DEFAULT_AUDIO_SETTINGS.masterVolume,
+    sfxVolume:
+      typeof p.sfxVolume === 'number' && Number.isFinite(p.sfxVolume)
+        ? clamp(p.sfxVolume, 0, 1)
+        : DEFAULT_AUDIO_SETTINGS.sfxVolume,
+    bgmVolume:
+      typeof p.bgmVolume === 'number' && Number.isFinite(p.bgmVolume)
+        ? clamp(p.bgmVolume, 0, 1)
+        : DEFAULT_AUDIO_SETTINGS.bgmVolume,
+  };
+}
+
+export function loadAudioSettings(): AudioSettings {
+  try {
+    const raw = localStorage.getItem(KEY_AUDIO);
+    if (!raw) return { ...DEFAULT_AUDIO_SETTINGS };
+    return sanitizeAudioSettings(JSON.parse(raw));
+  } catch {
+    return { ...DEFAULT_AUDIO_SETTINGS };
+  }
+}
+
+export function saveAudioSettings(settings: AudioSettings): void {
+  try {
+    localStorage.setItem(KEY_AUDIO, JSON.stringify(sanitizeAudioSettings(settings)));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+export function loadPlayerCosmetics(): PlayerCosmetics {
+  try {
+    const raw = localStorage.getItem(KEY_COSMETICS);
+    if (!raw) return { ...DEFAULT_COSMETICS };
+    return sanitizeCosmetics(JSON.parse(raw));
+  } catch {
+    return { ...DEFAULT_COSMETICS };
+  }
+}
+
+export function savePlayerCosmetics(cosmetics: PlayerCosmetics): void {
+  try {
+    localStorage.setItem(KEY_COSMETICS, JSON.stringify(sanitizeCosmetics(cosmetics)));
   } catch {
     // Ignore storage errors
   }

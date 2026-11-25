@@ -1,3 +1,4 @@
+import { DEFAULT_COSMETICS, getNeonTheme, type PlayerCosmetics, type ShatterStyleId } from '@config/cosmetics';
 import { canvasFont } from '@config/typography';
 import type { SimEvent } from '@core/types';
 
@@ -10,7 +11,7 @@ interface Particle {
   size: number;
   life: number;
   maxLife: number;
-  isShard?: boolean;
+  kind?: 'dot' | 'shard' | 'bolt' | 'star';
   angle?: number;
   vAngle?: number;
 }
@@ -36,8 +37,8 @@ interface FloatingText {
   maxLife: number;
 }
 
-const MAX_PARTICLES = 180;
-const MAX_SHOCKWAVES = 24;
+const MAX_PARTICLES = 220;
+const MAX_SHOCKWAVES = 32;
 const MAX_FLOATING_TEXTS = 36;
 
 export class VFXManager {
@@ -65,9 +66,125 @@ export class VFXManager {
     this.screenShake = 0;
   }
 
-  public ingestEvents(events: SimEvent[]): void {
+  public spawnShatterEffect(
+    x: number,
+    y: number,
+    baseColor: string,
+    radius: number,
+    style: ShatterStyleId,
+  ): void {
+    if (style === 'sparks') {
+      for (let i = 0; i < 16; i++) {
+        const ang = (i / 16) * Math.PI * 2 + (Math.random() - 0.5) * 0.25;
+        const spd = 220 + Math.random() * 290;
+        this.particles.push({
+          x,
+          y,
+          vx: Math.cos(ang) * spd,
+          vy: Math.sin(ang) * spd,
+          color: i % 2 === 0 ? '#fef08a' : baseColor,
+          size: radius * (0.55 + Math.random() * 0.4),
+          life: 0.30 + Math.random() * 0.18,
+          maxLife: 0.48,
+          kind: 'bolt',
+          angle: ang,
+        });
+      }
+      this.shockwaves.push({
+        x,
+        y,
+        r: radius * 0.4,
+        maxR: radius * 3.4,
+        life: 0.24,
+        maxLife: 0.24,
+        color: '#fef08a',
+      });
+    } else if (style === 'rings') {
+      for (let ring = 0; ring < 3; ring++) {
+        this.shockwaves.push({
+          x,
+          y,
+          r: radius * (0.4 + ring * 0.35),
+          maxR: radius * (2.5 + ring * 1.1),
+          life: 0.24 + ring * 0.11,
+          maxLife: 0.24 + ring * 0.11,
+          color: ring === 1 ? '#ffffff' : baseColor,
+        });
+      }
+      for (let i = 0; i < 8; i++) {
+        const ang = (i / 8) * Math.PI * 2;
+        const spd = 130 + Math.random() * 140;
+        this.particles.push({
+          x,
+          y,
+          vx: Math.cos(ang) * spd,
+          vy: Math.sin(ang) * spd,
+          color: baseColor,
+          size: 3.4,
+          life: 0.34,
+          maxLife: 0.34,
+          kind: 'dot',
+        });
+      }
+    } else if (style === 'nova') {
+      for (let i = 0; i < 14; i++) {
+        const ang = (i / 14) * Math.PI * 2 + (Math.random() - 0.5) * 0.3;
+        const spd = 140 + Math.random() * 230;
+        this.particles.push({
+          x,
+          y,
+          vx: Math.cos(ang) * spd,
+          vy: Math.sin(ang) * spd,
+          color: i % 3 === 0 ? '#ffffff' : i % 2 === 0 ? '#fbbf24' : baseColor,
+          size: radius * (0.34 + Math.random() * 0.26),
+          life: 0.42 + Math.random() * 0.22,
+          maxLife: 0.64,
+          kind: 'star',
+          angle: Math.random() * Math.PI,
+          vAngle: (Math.random() - 0.5) * 10,
+        });
+      }
+      this.shockwaves.push(
+        { x, y, r: radius * 0.5, maxR: radius * 3.1, life: 0.28, maxLife: 0.28, color: baseColor },
+        { x, y, r: radius * 0.2, maxR: radius * 2.1, life: 0.20, maxLife: 0.20, color: '#ffffff' },
+      );
+    } else {
+      // Classic crystalline shards
+      for (let i = 0; i < 12; i++) {
+        const ang = (i / 12) * Math.PI * 2 + (Math.random() - 0.5) * 0.35;
+        const spd = 120 + Math.random() * 240;
+        this.particles.push({
+          x,
+          y,
+          vx: Math.cos(ang) * spd,
+          vy: Math.sin(ang) * spd,
+          color: i % 3 === 0 ? '#fbbf24' : baseColor,
+          size: radius * (0.28 + Math.random() * 0.28),
+          life: 0.45 + Math.random() * 0.25,
+          maxLife: 0.70,
+          kind: 'shard',
+          angle: Math.random() * Math.PI * 2,
+          vAngle: (Math.random() - 0.5) * 14,
+        });
+      }
+      this.shockwaves.push({
+        x,
+        y,
+        r: radius * 0.6,
+        maxR: radius * 3.0,
+        life: 0.28,
+        maxLife: 0.28,
+        color: '#fbbf24',
+      });
+    }
+    this.enforceCaps();
+  }
+
+  public ingestEvents(events: SimEvent[], playerCosmetics: PlayerCosmetics = DEFAULT_COSMETICS): void {
+    const theme = getNeonTheme(playerCosmetics.neonTheme);
     for (const ev of events) {
       if (ev.type === 'sparks') {
+        const sparkColor = ev.color === '#38bdf8' ? theme.main : ev.color;
         for (let i = 0; i < ev.count; i++) {
           const ang = Math.random() * Math.PI * 2;
           const spd = ev.speed * (0.35 + Math.random() * 0.85);
@@ -76,40 +193,20 @@ export class VFXManager {
             y: ev.y,
             vx: Math.cos(ang) * spd,
             vy: Math.sin(ang) * spd,
-            color: ev.color,
+            color: sparkColor,
             size: ev.size * (0.65 + Math.random() * 0.6),
             life: 0.25 + Math.random() * 0.22,
             maxLife: 0.47,
+            kind: 'dot',
           });
         }
       } else if (ev.type === 'shatter') {
-        for (let i = 0; i < 12; i++) {
-          const ang = (i / 12) * Math.PI * 2 + (Math.random() - 0.5) * 0.35;
-          const spd = 120 + Math.random() * 240;
-          this.particles.push({
-            x: ev.x,
-            y: ev.y,
-            vx: Math.cos(ang) * spd,
-            vy: Math.sin(ang) * spd,
-            color: i % 3 === 0 ? '#fbbf24' : ev.color,
-            size: ev.radius * (0.28 + Math.random() * 0.28),
-            life: 0.45 + Math.random() * 0.25,
-            maxLife: 0.70,
-            isShard: true,
-            angle: Math.random() * Math.PI * 2,
-            vAngle: (Math.random() - 0.5) * 14,
-          });
-        }
-        this.shockwaves.push({
-          x: ev.x,
-          y: ev.y,
-          r: ev.radius * 0.6,
-          maxR: ev.radius * 3.0,
-          life: 0.28,
-          maxLife: 0.28,
-          color: '#fbbf24',
-        });
+        const isPlayerShard = ev.color === '#38bdf8';
+        const color = isPlayerShard ? theme.main : ev.color;
+        const style: ShatterStyleId = isPlayerShard ? playerCosmetics.shatterStyle : 'shards';
+        this.spawnShatterEffect(ev.x, ev.y, color, ev.radius, style);
       } else if (ev.type === 'shockwave') {
+        const color = ev.color === '#38bdf8' ? theme.main : ev.color;
         this.shockwaves.push({
           x: ev.x,
           y: ev.y,
@@ -117,7 +214,7 @@ export class VFXManager {
           maxR: ev.maxR,
           life: ev.life,
           maxLife: ev.life,
-          color: ev.color,
+          color,
         });
       } else if (ev.type === 'floatingText') {
         this.floatingTexts.push({
@@ -151,7 +248,7 @@ export class VFXManager {
       p.y += p.vy * dt;
       p.vx *= Math.pow(0.06, dt);
       p.vy *= Math.pow(0.06, dt);
-      if (p.isShard && p.angle !== undefined && p.vAngle !== undefined) {
+      if ((p.kind === 'shard' || p.kind === 'star') && p.angle !== undefined && p.vAngle !== undefined) {
         p.angle += p.vAngle * dt;
       }
     }
@@ -193,13 +290,37 @@ export class VFXManager {
       ctx.save();
       ctx.globalAlpha = a;
       ctx.fillStyle = p.color;
-      if (p.isShard) {
+      ctx.strokeStyle = p.color;
+      if (p.kind === 'shard') {
         ctx.translate(p.x, p.y);
         ctx.rotate(p.angle ?? 0);
         ctx.beginPath();
         ctx.moveTo(0, -p.size);
         ctx.lineTo(p.size * 0.85, p.size * 0.65);
         ctx.lineTo(-p.size * 0.85, p.size * 0.45);
+        ctx.closePath();
+        ctx.fill();
+      } else if (p.kind === 'bolt') {
+        const ang = p.angle ?? 0;
+        const len = p.size * (0.9 + a * 0.9);
+        ctx.lineWidth = 2.4;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(p.x - Math.cos(ang) * len * 0.5, p.y - Math.sin(ang) * len * 0.5);
+        ctx.lineTo(p.x + Math.cos(ang) * len * 0.5, p.y + Math.sin(ang) * len * 0.5);
+        ctx.stroke();
+      } else if (p.kind === 'star') {
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.angle ?? 0);
+        ctx.beginPath();
+        for (let k = 0; k < 8; k++) {
+          const rad = k % 2 === 0 ? p.size * 1.35 : p.size * 0.42;
+          const sa = (k * Math.PI) / 4;
+          const sx = Math.cos(sa) * rad;
+          const sy = Math.sin(sa) * rad;
+          if (k === 0) ctx.moveTo(sx, sy);
+          else ctx.lineTo(sx, sy);
+        }
         ctx.closePath();
         ctx.fill();
       } else {

@@ -1,5 +1,6 @@
 import type { InputMode } from '@input/inputManager';
 import type { AuthUser } from '@net/authClient';
+import type { AudioSettings } from '@storage/profiles';
 
 export class AuthModal {
   private mount: HTMLElement;
@@ -133,18 +134,21 @@ export function renderSettingsModal(opts: {
   mount: HTMLElement;
   user: AuthUser | null;
   mode: InputMode;
-  soundEnabled: boolean;
+  audioSettings: AudioSettings;
   onOpenControls: () => void;
+  onOpenCosmetics: () => void;
   onToggleMode: () => void;
-  onToggleSound: () => void;
+  onAudioChange: (next: AudioSettings) => void;
+  onTestSound: () => void;
   onOpenHelp: () => void;
   onOpenAuth: () => void;
   onLogout: () => void;
   onClose: () => void;
 }): void {
+  const a = opts.audioSettings;
   opts.mount.innerHTML = `
     <div class="overlay">
-      <div class="modal-card compact-auth">
+      <div class="modal-card compact-auth settings-wide">
         <div class="modal-header">
           <div class="modal-title">Cài đặt</div>
           <button class="btn sm" id="setClose">Đóng</button>
@@ -161,31 +165,61 @@ export function renderSettingsModal(opts: {
 
             <div class="settings-row">
               <div>
+                <div class="settings-name">Ngoại hình &amp; Hiệu ứng</div>
+                <div class="settings-sub">Chọn bộ màu Neon, kiểu hạt vỡ mảnh &amp; hiệu ứng Lướt</div>
+              </div>
+              <button class="btn sm amber" id="setCosmetics">Tùy chỉnh</button>
+            </div>
+
+            <div class="settings-row">
+              <div>
                 <div class="settings-name">Chế độ thiết bị</div>
                 <div class="settings-sub">Đang dùng: <strong>${opts.mode === 'desktop' ? 'Máy tính (PC)' : 'Điện thoại (Mobile)'}</strong></div>
               </div>
               <button class="btn sm" id="setMode">Đổi sang ${opts.mode === 'desktop' ? 'Mobile' : 'PC'}</button>
             </div>
 
-            <div class="settings-row">
-              <div>
-                <div class="settings-name">Âm thanh hiệu ứng</div>
-                <div class="settings-sub">Trạng thái: <strong>${opts.soundEnabled ? 'Đang bật' : 'Đang tắt'}</strong></div>
+            <div class="settings-audio-box">
+              <div class="settings-row-inline">
+                <div>
+                  <div class="settings-name">Âm thanh &amp; Nhạc nền</div>
+                  <div class="settings-sub">Trạng thái: <strong>${a.enabled ? 'Đang bật' : 'Đang tắt'}</strong></div>
+                </div>
+                <div style="display:flex;gap:6px;">
+                  <button class="btn sm" id="setTestSfx" type="button">Thử âm</button>
+                  <button class="btn sm ${a.enabled ? 'primary' : ''}" id="setSound" type="button">${a.enabled ? 'Tắt âm' : 'Bật âm'}</button>
+                </div>
               </div>
-              <button class="btn sm" id="setSound">${opts.soundEnabled ? 'Tắt âm' : 'Bật âm'}</button>
+              <div class="audio-sliders">
+                <label class="audio-slider-row">
+                  <span>Âm lượng tổng</span>
+                  <input id="volMaster" type="range" min="0" max="100" value="${Math.round(a.masterVolume * 100)}" />
+                  <strong id="volMasterVal">${Math.round(a.masterVolume * 100)}%</strong>
+                </label>
+                <label class="audio-slider-row">
+                  <span>Hiệu ứng (SFX)</span>
+                  <input id="volSfx" type="range" min="0" max="100" value="${Math.round(a.sfxVolume * 100)}" />
+                  <strong id="volSfxVal">${Math.round(a.sfxVolume * 100)}%</strong>
+                </label>
+                <label class="audio-slider-row">
+                  <span>Nhạc nền (BGM)</span>
+                  <input id="volBgm" type="range" min="0" max="100" value="${Math.round(a.bgmVolume * 100)}" />
+                  <strong id="volBgmVal">${Math.round(a.bgmVolume * 100)}%</strong>
+                </label>
+              </div>
             </div>
 
             <div class="settings-row">
               <div>
                 <div class="settings-name">Hướng dẫn &amp; Luật chơi</div>
-                <div class="settings-sub">4 Quy tắc Vật lý Va chạm &amp; 4 Kỹ năng Đặc biệt</div>
+                <div class="settings-sub">4 Quy tắc Vật lý Va chạm &amp; Kỹ năng Đặc biệt</div>
               </div>
               <button class="btn sm" id="setHelp">Xem</button>
             </div>
 
             <div class="settings-row">
               <div>
-                <div class="settings-name">Tài khoản lưu vũ khí</div>
+                <div class="settings-name">Tài khoản lưu vũ khí &amp; ngoại hình</div>
                 <div class="settings-sub">${
                   opts.user
                     ? `Đang đăng nhập: <strong>${opts.user.username}</strong>`
@@ -206,8 +240,27 @@ export function renderSettingsModal(opts: {
 
   opts.mount.querySelector('#setClose')?.addEventListener('click', opts.onClose);
   opts.mount.querySelector('#setControls')?.addEventListener('click', opts.onOpenControls);
+  opts.mount.querySelector('#setCosmetics')?.addEventListener('click', opts.onOpenCosmetics);
   opts.mount.querySelector('#setMode')?.addEventListener('click', opts.onToggleMode);
-  opts.mount.querySelector('#setSound')?.addEventListener('click', opts.onToggleSound);
+  opts.mount.querySelector('#setTestSfx')?.addEventListener('click', opts.onTestSound);
+  opts.mount.querySelector('#setSound')?.addEventListener('click', () => {
+    opts.onAudioChange({ ...a, enabled: !a.enabled });
+  });
+
+  const bindSlider = (id: string, valId: string, field: 'masterVolume' | 'sfxVolume' | 'bgmVolume') => {
+    const inp = opts.mount.querySelector<HTMLInputElement>(`#${id}`);
+    const out = opts.mount.querySelector<HTMLElement>(`#${valId}`);
+    inp?.addEventListener('input', () => {
+      const pct = Number(inp.value);
+      if (out) out.textContent = `${pct}%`;
+      a[field] = pct / 100;
+      opts.onAudioChange({ ...a });
+    });
+  };
+  bindSlider('volMaster', 'volMasterVal', 'masterVolume');
+  bindSlider('volSfx', 'volSfxVal', 'sfxVolume');
+  bindSlider('volBgm', 'volBgmVal', 'bgmVolume');
+
   opts.mount.querySelector('#setHelp')?.addEventListener('click', opts.onOpenHelp);
   opts.mount.querySelector('#setAuth')?.addEventListener('click', opts.onOpenAuth);
   opts.mount.querySelector('#setLogout')?.addEventListener('click', opts.onLogout);

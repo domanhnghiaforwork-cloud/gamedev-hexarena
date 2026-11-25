@@ -84,58 +84,74 @@ export function renderArena(ctx: CanvasRenderingContext2D, obstacles: Obstacle[]
     }
   }
 
-  // Subtle center arena ring & axis marks
-  ctx.strokeStyle = 'rgba(56, 189, 248, 0.11)';
+  // Subtle center arena ring, tactical cross & axis marks
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.14)';
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.arc(0, 0, 115, 0, Math.PI * 2);
   ctx.stroke();
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.08)';
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.arc(0, 0, 56, 0, Math.PI * 2);
+  ctx.stroke();
   ctx.beginPath();
   ctx.moveTo(0, -ARENA_RADIUS);
   ctx.lineTo(0, ARENA_RADIUS);
-  ctx.strokeStyle = 'rgba(148, 163, 184, 0.06)';
+  ctx.moveTo(-ARENA_RADIUS, 0);
+  ctx.lineTo(ARENA_RADIUS, 0);
+  ctx.strokeStyle = 'rgba(148, 163, 184, 0.055)';
   ctx.stroke();
 
   ctx.restore();
 
-  // Crisp inner glowing arena border
+  // Crisp two-pass inner glowing arena border
   drawHexPolygon(ctx, 0, 0, ARENA_RADIUS, 0);
-  ctx.strokeStyle = 'rgba(56, 189, 248, 0.55)';
-  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.18)';
+  ctx.lineWidth = 7;
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.62)';
+  ctx.lineWidth = 2.4;
   ctx.stroke();
 
-  // Render 2.5D Obstacles (shadow + extruded base + elevated beveled top)
+  // Render 2.5D Obstacles (dual-layer shadow + extruded base + elevated beveled top + rim sheen)
   for (const obs of obstacles) {
-    // Ground drop shadow
+    // Wide ambient ground drop shadow
     ctx.save();
-    drawObstacleShape(ctx, obs.x + 8, obs.y + 13, obs, 1.02);
-    ctx.fillStyle = 'rgba(6, 10, 18, 0.52)';
+    drawObstacleShape(ctx, obs.x + 11, obs.y + 18, obs, 1.07);
+    ctx.fillStyle = 'rgba(4, 8, 16, 0.34)';
+    ctx.fill();
+
+    // Tight contact shadow
+    drawObstacleShape(ctx, obs.x + 5, obs.y + 9, obs, 1.01);
+    ctx.fillStyle = 'rgba(6, 10, 18, 0.56)';
     ctx.fill();
 
     // Base footprint (side extrusion)
     drawObstacleShape(ctx, obs.x, obs.y, obs, 1.0);
     ctx.fillStyle = '#18202e';
     ctx.fill();
-    ctx.strokeStyle = 'rgba(148, 163, 184, 0.25)';
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.28)';
     ctx.lineWidth = 1.8;
     ctx.stroke();
 
     // Elevated top face
-    const liftY = -Math.min(14, obs.height * 0.55);
+    const liftY = -Math.min(15, obs.height * 0.58);
     drawObstacleShape(ctx, obs.x, obs.y + liftY, obs, 0.94);
     const topGrad = ctx.createLinearGradient(obs.x - obs.boundR, obs.y + liftY - obs.boundR, obs.x + obs.boundR, obs.y + liftY + obs.boundR);
-    topGrad.addColorStop(0, '#3a465c');
-    topGrad.addColorStop(1, '#263043');
+    topGrad.addColorStop(0, '#44526b');
+    topGrad.addColorStop(0.55, '#333f54');
+    topGrad.addColorStop(1, '#232c3e');
     ctx.fillStyle = topGrad;
     ctx.fill();
-    ctx.strokeStyle = 'rgba(148, 163, 184, 0.55)';
+    ctx.strokeStyle = 'rgba(203, 213, 225, 0.58)';
     ctx.lineWidth = 1.8;
     ctx.stroke();
 
     // Inner geometric bevel accent
     drawObstacleShape(ctx, obs.x, obs.y + liftY, obs, 0.62);
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.20)';
-    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.24)';
+    ctx.lineWidth = 1.3;
     ctx.stroke();
     ctx.restore();
   }

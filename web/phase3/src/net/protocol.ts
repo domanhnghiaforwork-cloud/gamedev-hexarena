@@ -1,5 +1,6 @@
 import { angleDiff } from '@core/math/hexMath';
 import type {
+  AttackModeId,
   Fighter,
   FighterId,
   FireMode,
@@ -8,6 +9,7 @@ import type {
   HexRole,
   HexState,
   MatchState,
+  MatchStats,
   Obstacle,
   PlayerLoadout,
   RotMode,
@@ -157,6 +159,7 @@ export interface MatchSnapshot {
   dmgDealt: number;
   hexBroken: number;
   elapsed: number;
+  stats?: MatchStats;
   self: SerializedFighter;
   opp: SerializedFighter;
   events: SimEvent[];
@@ -307,6 +310,38 @@ export function buildSeatSnapshot(
     }
   }
 
+  const copyModeMap = (m: Record<AttackModeId, number>): Record<AttackModeId, number> => ({
+    loose: m.loose,
+    ranged: m.ranged,
+    melee: m.melee,
+    defense: m.defense,
+  });
+
+  const mappedStats: MatchStats = flip
+    ? {
+        dmgDealt: state.stats.enemyDmg,
+        enemyDmg: state.stats.dmgDealt,
+        hexBroken: state.stats.enemyHexBroken,
+        enemyHexBroken: state.stats.hexBroken,
+        elapsed: r1(state.stats.elapsed),
+        playerAttacks: state.stats.enemyAttacks,
+        playerHits: state.stats.enemyHits,
+        enemyAttacks: state.stats.playerAttacks,
+        enemyHits: state.stats.playerHits,
+        playerDmgByMode: copyModeMap(state.stats.enemyDmgByMode),
+        enemyDmgByMode: copyModeMap(state.stats.playerDmgByMode),
+        playerSpecialUses: copyModeMap(state.stats.enemySpecialUses),
+        enemySpecialUses: copyModeMap(state.stats.playerSpecialUses),
+      }
+    : {
+        ...state.stats,
+        elapsed: r1(state.stats.elapsed),
+        playerDmgByMode: copyModeMap(state.stats.playerDmgByMode),
+        enemyDmgByMode: copyModeMap(state.stats.enemyDmgByMode),
+        playerSpecialUses: copyModeMap(state.stats.playerSpecialUses),
+        enemySpecialUses: copyModeMap(state.stats.enemySpecialUses),
+      };
+
   return {
     tick,
     serverTime,
@@ -314,9 +349,10 @@ export function buildSeatSnapshot(
     timeRemaining: r1(state.timeRemaining),
     matchOver: state.matchOver,
     winner: mappedWinner,
-    dmgDealt: flip ? state.stats.enemyDmg : state.stats.dmgDealt,
-    hexBroken: flip ? state.stats.enemyHexBroken : state.stats.hexBroken,
-    elapsed: r1(state.stats.elapsed),
+    dmgDealt: mappedStats.dmgDealt,
+    hexBroken: mappedStats.hexBroken,
+    elapsed: mappedStats.elapsed,
+    stats: mappedStats,
     self: serializeFighter(selfF, flip),
     opp: serializeFighter(oppF, flip),
     events: mappedEvents,
