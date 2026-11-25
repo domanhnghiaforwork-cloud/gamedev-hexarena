@@ -36,6 +36,9 @@ export interface MobileComputedLayout {
   formRotRad: number;
   special: CircleWidget;
   specialRotRad: number;
+  specialLock: CircleWidget;
+  specialBadge: CircleWidget;
+  specialLockLocked: boolean;
   cancel: CircleWidget;
   arc: {
     cx: number;
@@ -84,14 +87,54 @@ export function getMobileSpecialRadialPos(
   total: number,
 ): { x: number; y: number; r: number } {
   const safeTotal = Math.max(1, total);
-  const step = safeTotal <= 3 ? 0.50 : Math.min(0.46, 1.55 / Math.max(1, safeTotal - 1));
+  const step = safeTotal <= 2 ? 0.80 : safeTotal === 3 ? 0.70 : Math.min(0.62, 2.2 / Math.max(1, safeTotal - 1));
   const centerAng = -Math.PI * 0.56 + rotRad;
   const ang = centerAng + (idx - (safeTotal - 1) * 0.5) * step;
-  const distR = special.r + 52 * baseScale;
+  const distR = special.r + 30 * baseScale;
   return {
     x: special.cx + Math.cos(ang) * distR,
     y: special.cy + Math.sin(ang) * distR,
-    r: 22 * baseScale,
+    r: 19 * baseScale,
+  };
+}
+
+export function getMobileSpecialLockPos(
+  special: CircleWidget,
+  baseScale: number,
+  rotRad: number,
+  vw?: number,
+  vh?: number,
+): CircleWidget {
+  const lockAng = Math.PI * 0.98 + rotRad;
+  const lockR = clamp(12.5 * baseScale, 10, 15.5);
+  const lockDist = special.r + lockR + 5 * baseScale;
+  let cx = special.cx + Math.cos(lockAng) * lockDist;
+  let cy = special.cy + Math.sin(lockAng) * lockDist;
+  if (typeof vw === 'number' && typeof vh === 'number') {
+    cx = clamp(cx, lockR + 4, Math.max(lockR + 4, vw - lockR - 4));
+    cy = clamp(cy, lockR + 4, Math.max(lockR + 4, vh - lockR - 4));
+  }
+  return {
+    cx,
+    cy,
+    r: lockR,
+    opacity: special.opacity,
+  };
+}
+
+export function getMobileSpecialBadgePos(
+  special: CircleWidget,
+  baseScale: number,
+  rotRad: number,
+): CircleWidget {
+  const badgeAng = -Math.PI * 0.22 + rotRad;
+  const badgeR = Math.max(8.5, 9.5 * baseScale);
+  const badgeDist = special.r * 0.96;
+  return {
+    cx: special.cx + Math.cos(badgeAng) * badgeDist,
+    cy: special.cy + Math.sin(badgeAng) * badgeDist,
+    r: badgeR,
+    opacity: special.opacity,
   };
 }
 
@@ -274,6 +317,9 @@ export function computeSmartMobileLayout(
   const specP = posOf('special', specR + 4, specR + 4);
   const special: CircleWidget = { cx: specP.cx, cy: specP.cy, r: specR, opacity: specP.opacity };
   const specialRotRad = (rotDegOf('special') * Math.PI) / 180;
+  const specialLock = getMobileSpecialLockPos(special, s, specialRotRad, vw, vh);
+  const specialBadge = getMobileSpecialBadgePos(special, s, specialRotRad);
+  const specialLockLocked = Boolean(config.specialSelectorLocked);
 
   // Cancel X Zone
   const cancelR = 25 * s * config.widgets.cancel.scale;
@@ -437,6 +483,9 @@ export function computeSmartMobileLayout(
     formRotRad,
     special,
     specialRotRad,
+    specialLock,
+    specialBadge,
+    specialLockLocked,
     cancel,
     arc,
     btnRecall,

@@ -1,5 +1,12 @@
 import { DASH_COOLDOWN, DASH_DURATION, DASH_SPEED, PLAYER_RADIUS } from '../constants';
-import { applyBlueprintFormation, isDefenseFortressActive, isHexStolen, isSlotKey } from '../world/structure';
+import {
+  applyBlueprintFormation,
+  isDefenseFortressActive,
+  isHexStolen,
+  isRangedSniperActive,
+  isSlotKey,
+} from '../world/structure';
+import { endRangedSniperStage } from './ranged/specials/sniperStage';
 import type { Fighter, FormKey, MatchState, RotMode, ScaleTier } from '../types';
 
 export function setFighterScale(state: MatchState, fighter: Fighter, scaleVal: ScaleTier): void {
@@ -38,7 +45,9 @@ export function setFighterForm(state: MatchState, fighter: Fighter, newForm: For
   if (fighter.form === newForm) return;
 
   // Cancel any active form-specific Special Skill cleanly on form switch (prevents cross-form buff abuse)
-  if (fighter.specialActive) {
+  if (isRangedSniperActive(fighter)) {
+    endRangedSniperStage(state, fighter, true);
+  } else if (fighter.specialActive) {
     if (fighter.specialActive.prevScale) {
       fighter.targetScale = fighter.specialActive.prevScale;
     }
@@ -53,7 +62,12 @@ export function setFighterForm(state: MatchState, fighter: Fighter, newForm: For
   if (newForm === 'loose') {
     const total = fighter.hexes.length;
     fighter.hexes.forEach((h, idx) => {
-      if (h.state !== 'BROKEN' && !isHexStolen(h)) {
+      if (
+        h.state !== 'BROKEN' &&
+        !isHexStolen(h) &&
+        h.state !== 'SNIPER_SHOT' &&
+        h.state !== 'SNIPER_RETURN'
+      ) {
         h.state = 'ORBIT';
         h.selected = true;
         h.altitude = 0;
@@ -84,6 +98,9 @@ export function executeFighterDash(state: MatchState, fighter: Fighter, angle: n
       state.events.push({ type: 'toast', message: 'Đang bật Pháo Đài — không thể Lướt!', target: fighter.id });
     }
     return false;
+  }
+  if (isRangedSniperActive(fighter)) {
+    endRangedSniperStage(state, fighter, true);
   }
 
   fighter.dashCooldown = DASH_COOLDOWN;

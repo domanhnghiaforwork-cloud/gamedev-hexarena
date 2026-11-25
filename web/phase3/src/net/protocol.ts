@@ -69,7 +69,7 @@ export type PvPAction =
   | { kind: 'select_all' }
   | { kind: 'attack'; angle: number; strength: number }
   | { kind: 'dash'; angle: number }
-  | { kind: 'special'; skillId?: SpecialSkillId }
+  | { kind: 'special'; skillId?: SpecialSkillId; angle?: number; strength?: number }
   | { kind: 'set_special_skill'; modeId: AttackModeId; skillId: SpecialSkillId }
   | { kind: 'smart_recall' }
   | { kind: 'recall_hex'; hexId: number }
@@ -142,6 +142,7 @@ export interface SerializedHex {
   role: HexRole;
   stolenById: FighterId | null;
   stolenTimer: number;
+  sniperEmpowered?: boolean;
 }
 
 export interface SerializedRangedAnim {
@@ -169,6 +170,11 @@ export interface SerializedFighter {
   hp: number;
   maxHp: number;
   damageFlash: number;
+  slowTimer?: number;
+  slowFactor?: number;
+  recoilTimer?: number;
+  recoilAngle?: number;
+  recoilAmp?: number;
   form: FormKey;
   rootHexId: number;
   targetScale: ScaleTier;
@@ -297,6 +303,11 @@ function serializeFighter(f: Fighter, flipIds: boolean): SerializedFighter {
     hp: f.hp,
     maxHp: f.maxHp,
     damageFlash: r3(f.damageFlash),
+    slowTimer: r3(f.slowTimer),
+    slowFactor: r3(f.slowFactor),
+    recoilTimer: r3(f.recoilTimer),
+    recoilAngle: r3(f.recoilAngle),
+    recoilAmp: r1(f.recoilAmp),
     form: f.form,
     rootHexId: f.rootHexId,
     targetScale: f.targetScale,
@@ -334,6 +345,7 @@ function serializeFighter(f: Fighter, flipIds: boolean): SerializedFighter {
       role: h.role,
       stolenById: swapId(h.stolenById, flipIds),
       stolenTimer: r1(h.stolenTimer),
+      sniperEmpowered: h.sniperEmpowered ? true : undefined,
     })),
   };
 }

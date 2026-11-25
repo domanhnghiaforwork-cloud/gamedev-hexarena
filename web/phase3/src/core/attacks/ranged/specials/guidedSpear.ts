@@ -53,8 +53,10 @@ export const GUIDED_SPEAR_SKILL: SpecialSkillDefinition = {
   dur: 8.0,
   cd: 20.0,
   color: '#c084fc',
+  targeting: 'direction',
+  aimRange: 380,
   desc: 'Tách vũ khí bay tự do (tốc ~0.56× dễ lái, +35% sát thương). Click bay qua điểm (PC) / kéo hướng lái (Mobile) hoặc Tự động săn địch.',
-  activate: ({ state, fighter }) => {
+  activate: ({ state, fighter, aimAngle }) => {
     const assembled = fighter.hexes.filter((h) => h.state === 'ASSEMBLED');
     if (assembled.length === 0) {
       return false;
@@ -77,6 +79,10 @@ export const GUIDED_SPEAR_SKILL: SpecialSkillDefinition = {
 
     if (fighter.attackAnim && fighter.attackAnim.type === 'ranged') {
       const anim = fighter.attackAnim;
+      if (aimAngle !== undefined) {
+        anim.angle = aimAngle;
+        anim.targetAngle = aimAngle;
+      }
       anim.phase = 'guided';
       anim.guidedSpeed = guidedSpeed;
       anim.retSpeed = baseOutSpeed * 2.0;
@@ -95,7 +101,7 @@ export const GUIDED_SPEAR_SKILL: SpecialSkillDefinition = {
       anim.hitBody = false;
       anim.hitHexIds.clear();
     } else {
-      const launchAng = fighter.facing;
+      const launchAng = aimAngle ?? fighter.facing;
       const sx = fighter.x + Math.cos(launchAng) * startDist;
       const sy = fighter.y + Math.sin(launchAng) * startDist;
       fighter.attackAnim = {

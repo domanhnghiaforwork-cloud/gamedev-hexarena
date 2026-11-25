@@ -110,3 +110,29 @@ Tài liệu ghi nhận quá trình phát triển nhánh **Giai đoạn 3** trong
   * **Tách bạch hai Ulti Phòng thủ:** Bổ sung `isDefenseFortressActive` và `isDefenseHexWallActive` để *Tường Lục Giác* không bị khóa Lướt, không giảm 40% tốc chạy hay khóa xoay thân như *Pháo Đài Phản Xung*.
   * **Điều khiển & Xem trước (`inputManager.ts`, `indicatorRenderer.ts`, `hudRenderer.ts`):** Hiện bóng mờ 4 mảnh tường sát trước mặt; trên Mobile giữ & xoay nút Đánh (nhãn **`TƯỜNG`**) rồi thả để đặt, trên PC rê chuột để xoay góc và click chuột trái để đặt.
 * **Kiểm thử:** Bổ sung `tests/hexWall.test.ts` kiểm chứng đặt tường 4 mảnh Base 100%, giới hạn 4 tường, tự tan sau 5s, chặn di chuyển cả 2 phe, đỡ đòn địch và đồng bộ `buildSeatSnapshot`.
+
+---
+
+## v3.7 — 25/11/2026: Nâng cấp Điều khiển Ulti Mobile (Chọn Sát Nút → Khóa Tâm Xoay Động → Hủy/Chọn Lại Cách B & Nút Khóa Chọn)
+
+* **Tách rõ pha Chọn chiêu & pha Xoay chiêu trên Mobile (`src/input/specialGesture.ts`, `src/input/hudPresets.ts`, `src/input/inputManager.ts`):**
+  * **Kéo các lựa chọn ôm sát nút Ulti:** Bán kính vòng cung chọn chiêu thu gọn còn `special.r + 30 * scale`, chỉ cần nhích nhẹ ngón tay là chạm tới ô chiêu.
+  * **Khóa lựa chọn + Tâm xoay động (Dynamic Pivot):** Ngay khi ngón tay chạm vào ô chiêu `1` / `2...`, hệ thống tự động **khóa lựa chọn đó** và đặt **tâm joystick xoay chiêu ngay tại vị trí ô vừa chạm** để người chơi tiếp tục kéo xoay 360° định hướng chiêu mà không bị giật góc hay mất hành trình tay.
+  * **Nút `✕ HỦY` kiêm chọn lại mượt theo Cách B (`reselect_armed`):** Kéo vào vùng `✕ HỦY` rồi **thả tay** sẽ hủy hoàn toàn không tung chiêu; kéo vào `✕ HỦY` rồi **kéo ngược ra ngoài** (không nhấc tay) sẽ tự mở khóa quay lại pha chọn để chọn sang chiêu khác ngay trong một nét vuốt.
+* **Nút Khóa chọn (`🔒`) cạnh nút Ulti (`src/storage/profiles.ts`, `src/render/hud/hudRenderer.ts`, `src/main.ts`):**
+  * Bổ sung nút ổ khóa nhỏ ngay cạnh nút Ulti (`MobileHUDConfig.specialSelectorLocked`, đồng bộ lên SQLite qua `saveControlsToAccount`). Khi bật Khóa, giữ/kéo nút Ulti sẽ **bỏ qua pha chọn và vào thẳng pha xoay chiêu**; vẫn có thể chạm nhanh vào **huy hiệu số `1/2`** góc nút để đổi chiêu tức thì.
+* **Khung Định hướng Kỹ năng Đặc biệt (`src/core/attacks/types.ts`, `registry.ts`, `guidedSpear.ts`, `indicatorRenderer.ts`, `protocol.ts`, `server/index.ts`):**
+  * Bổ sung `SpecialTargetingMode` (`instant` / `direction` / `ground`) + truyền `aimAngle`, `aimStrength` qua `triggerFighterSpecial` và gói `PvPAction: 'special'`, kèm hiển thị chỉ báo ngắm Ulti trên sân đấu (`renderSpecialAimIndicator`) và phóng *Ngự Thương Độc Lập* đúng hướng vừa xoay.
+* **Kiểm thử:** Mở rộng `tests/specialSelector.test.ts` kiểm chứng khoảng cách ôm sát + nút khóa không đè trên nhiều kích cỡ màn hình, truyền `aimAngle` vào *Ngự Thương*, và luồng trạng thái `pending → selecting → aiming (Dynamic Pivot) → reselect_armed → selecting / cancel` lẫn chế độ Khóa bỏ qua chọn.
+
+---
+
+## v3.8 — 25/11/2026: Kỹ năng Đặc biệt #2 cho Đánh xa (`Thương Kích Lục Giác`)
+
+* **Kỹ năng Đặc biệt #2 nhánh Đánh xa — `Thương Kích Lục Giác` (`ranged:sniper_stage`):**
+  * Đăng ký tại `src/core/attacks/ranged/specials/sniperStage.ts` & `RANGED_ATTACK_MODE` (ô số `2` trên cả PC và Mobile).
+  * **Thông số & Nhịp bắn tỉa:** Duy trì tối đa `10s` (`22s` hồi chiêu), mở vùng nón bắn tỉa `64°` (`±32°`, tầm `1050 px`) theo hướng kích hoạt; khóa di chuyển tại chỗ để bắn từng mảnh Hex từ mũi về gốc (`0.50s` / phát, tốc độ `1450 px/s`, riêng phát thứ 4 đạt `1680 px/s`).
+  * **Cường hóa Phát thứ 4 & Làm chậm:** Duy nhất **viên thứ 4** được cường hóa sát thương & động năng xuyên cao (viên 5..10 vẫn bắn thường đến hết mảnh); mọi phát trúng thân địch làm chậm **35%** trong **`0.60s`** (`SNIPER_SLOW_FACTOR = 0.65`) kèm hiệu ứng giật thân (`recoilTimer` / `recoilAmp`).
+  * **Vật lý & Thu hồi đa hướng:** Đạn bị chặn bởi vật cản và đi qua trọn vẹn 4 quy tắc vật lý Mảnh–Mảnh (kể cả Tường Lục Giác); khi bắn hết mảnh, hết giờ, kích hoạt lại Ulti, đổi dạng hoặc Lướt thoát khẩn cấp, toàn bộ mảnh đã bắn đồng loạt bay cao từ nhiều hướng ngoài biên đấu trường (`SNIPER_RETURN`) về ghép lại vũ khí.
+  * **Camera, Đồ họa & Đồng bộ PvP:** Tự động zoom-out nhẹ và dịch tâm camera theo vùng nón, hiển thị tia ngắm laze cắt vật cản, chấm đạn (ô #4 hình thoi vàng), vệt đạn rực sáng và đồng bộ đầy đủ qua `protocol.ts`, `pvpInterpolator.ts` & `server/index.ts`.
+* **Kiểm thử:** Bổ sung `tests/sniperStage.test.ts` kiểm chứng khóa vùng nón `±32°`, đứng im, chỉ viên thứ 4 cường hóa, làm chậm 35% trong `0.6s`, chặn vật cản/khiên theo 4 quy tắc, thu hồi đa hướng khi hủy bằng Lướt và đồng bộ snapshot PvP.

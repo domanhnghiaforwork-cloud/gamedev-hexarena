@@ -5,7 +5,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { resizeLoadoutHexCount, sanitizeLoadout } from '../src/core/world/blueprint';
 import { UserStore } from './db';
 import { applyHexDurabilityLoss } from '../src/core/physics/combat';
-import { isDefenseFortressActive } from '../src/core/world/structure';
+import { clampAngleToSniperCone, isDefenseFortressActive, isRangedSniperActive } from '../src/core/world/structure';
 import { FIXED_DT, MAX_HEX_COUNT, MIN_HEX_COUNT, PLAYER_MOVE_SPEED } from '../src/core/constants';
 import { clamp } from '../src/core/math/hexMath';
 import { createMatchState, stepSimulation } from '../src/core/physics/simulation';
@@ -449,7 +449,10 @@ function applyContinuousInput(fighter: Fighter, peer: PeerSlot, dt: number): Gui
   peer.lastAckSeq = input.seq;
 
   const mLen = Math.hypot(input.mx, input.my);
-  if (mLen > 0.04) {
+  if (isRangedSniperActive(fighter)) {
+    fighter.vx = 0;
+    fighter.vy = 0;
+  } else if (mLen > 0.04) {
     const norm = Math.min(1, mLen);
     fighter.vx = (input.mx / mLen) * PLAYER_MOVE_SPEED * norm;
     fighter.vy = (input.my / mLen) * PLAYER_MOVE_SPEED * norm;
@@ -469,6 +472,8 @@ function applyContinuousInput(fighter: Fighter, peer: PeerSlot, dt: number): Gui
     if (diff < 0) diff += Math.PI * 2;
     diff -= Math.PI;
     fighter.facing += clamp(diff, -3.4 * dt, 3.4 * dt);
+  } else if (isRangedSniperActive(fighter)) {
+    fighter.facing = clampAngleToSniperCone(fighter, input.facing);
   } else if (!fighter.attackAnim || fighter.attackAnim.type === 'ranged') {
     fighter.facing = input.facing;
   }
@@ -509,7 +514,10 @@ function applyAction(state: MatchState, fighter: Fighter, action: PvPAction): vo
       executeFighterDash(state, fighter, action.angle);
       break;
     case 'special':
-      triggerFighterSpecial(state, fighter, applyHexDurabilityLoss, action.skillId);
+      triggerFighterSpecial(state, fighter, applyHexDurabilityLoss, action.skillId, {
+        angle: action.angle,
+        strength: action.strength,
+      });
       break;
     case 'set_special_skill':
       setFighterSpecialSkill(state, fighter, action.skillId, action.modeId);

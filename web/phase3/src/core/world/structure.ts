@@ -10,7 +10,7 @@ import {
   REASSEMBLE_DURATION,
 } from '../constants';
 import { cloneLoadout, computeBlueprintMetrics, normalizeBlueprint } from './blueprint';
-import { axialKey, axialToLocal, dist } from '../math/hexMath';
+import { angleDiff, axialKey, axialToLocal, clamp, dist } from '../math/hexMath';
 import type {
   BlueprintDerivedMetrics,
   CombatStance,
@@ -137,6 +137,11 @@ export function createFighter(
     hp: MAX_PLAYER_HP,
     maxHp: MAX_PLAYER_HP,
     damageFlash: 0,
+    slowTimer: 0,
+    slowFactor: 1.0,
+    recoilTimer: 0,
+    recoilAngle: 0,
+    recoilAmp: 0,
     loadout: cleanLoadout,
     blueprintMetrics: metrics,
     form: 'loose',
@@ -434,6 +439,26 @@ export const HEX_WALL_MAX_ACTIVE = 4;
 export const HEX_WALL_LIFETIME = 5.0;
 export const HEX_WALL_PLACE_CD = 0.5;
 
+export const RANGED_SNIPER_CONE_HALF_ANGLE = (32 * Math.PI) / 180;
+export const RANGED_SNIPER_RANGE = 1050;
+
+export function isRangedSniperActive(fighter: Fighter): boolean {
+  return (
+    fighter.specialActive?.type === 'ranged' &&
+    fighter.specialActive.skillId === 'ranged:sniper_stage'
+  );
+}
+
+export function clampAngleToSniperCone(fighter: Fighter, angle: number): number {
+  if (!isRangedSniperActive(fighter) || fighter.specialActive?.coneAngle === undefined) {
+    return angle;
+  }
+  const center = fighter.specialActive.coneAngle;
+  const half = fighter.specialActive.coneHalfAngle ?? RANGED_SNIPER_CONE_HALF_ANGLE;
+  const diff = angleDiff(center, angle);
+  return center + clamp(diff, -half, half);
+}
+
 export function isDefenseFortressActive(fighter: Fighter): boolean {
   return (
     fighter.specialActive?.type === 'defense' &&
@@ -566,7 +591,13 @@ export function applyBlueprintFormation(
   const slotByHex = new Map(bp.slots.map((s) => [s.hexIndex, s]));
 
   fighter.rootHexId = bp.rootHexIndex;
-  const intact = fighter.hexes.filter((h) => h.state !== 'BROKEN' && !isHexStolen(h));
+  const intact = fighter.hexes.filter(
+    (h) =>
+      h.state !== 'BROKEN' &&
+      !isHexStolen(h) &&
+      h.state !== 'SNIPER_SHOT' &&
+      h.state !== 'SNIPER_RETURN',
+  );
   if (intact.length === 0) return;
 
   const instantStaticSnap = !isFullRecovery && fighter.rotMode === 'static';

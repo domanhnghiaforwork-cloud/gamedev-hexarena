@@ -737,6 +737,20 @@ const input = new InputManager({
   onAudioUnlock: () => soundFX.init(),
   isPvPActive: () => matchMode === 'pvp' && !inLobby,
   onPvPAction: (action) => pvpClient.sendAction(action),
+  onToggleSpecialLock: () => {
+    const nextLocked = !mobileHUDConfig.specialSelectorLocked;
+    mobileHUDConfig = { ...mobileHUDConfig, specialSelectorLocked: nextLocked };
+    saveMobileHUDConfig(mobileHUDConfig);
+    if (authClient.user) {
+      void authClient.saveControlsToAccount(mobileHUDConfig, pcControlConfig);
+    }
+    topBar.showToast(
+      nextLocked
+        ? 'Đã khóa chọn Ulti: Giữ nút để xoay chiêu ngay'
+        : 'Đã mở khóa chọn Ulti: Giữ nút để chọn 1/2 rồi xoay chiêu',
+    );
+    return nextLocked;
+  },
 });
 
 function hasModalOpen(): boolean {

@@ -30,6 +30,7 @@ export interface MobileHUDConfig {
   version: number;
   preset: MobilePresetId;
   snapGrid: boolean;
+  specialSelectorLocked?: boolean;
   widgets: Record<MobileWidgetId, WidgetTransform>;
 }
 
@@ -160,6 +161,7 @@ export function createMobileHUDPreset(preset: MobilePresetId): MobileHUDConfig {
       version: MOBILE_HUD_VERSION,
       preset,
       snapGrid: true,
+      specialSelectorLocked: false,
       widgets: {
         joy:          { nx: 0.13, ny: 0.77, scale: 1.0,  opacity: 0.90 },
         atk:          { nx: 0.90, ny: 0.78, scale: 1.0,  opacity: 0.94 },
@@ -180,6 +182,7 @@ export function createMobileHUDPreset(preset: MobilePresetId): MobileHUDConfig {
       version: MOBILE_HUD_VERSION,
       preset,
       snapGrid: true,
+      specialSelectorLocked: false,
       widgets: {
         joy:          { nx: 0.13, ny: 0.77, scale: 1.0,  opacity: 0.90 },
         atk:          { nx: 0.90, ny: 0.78, scale: 1.0,  opacity: 0.94 },
@@ -200,6 +203,7 @@ export function createMobileHUDPreset(preset: MobilePresetId): MobileHUDConfig {
     version: MOBILE_HUD_VERSION,
     preset: '2-finger',
     snapGrid: true,
+    specialSelectorLocked: false,
     widgets: {
       joy:          { nx: 0.13, ny: 0.79, scale: 1.0,  opacity: 0.90 },
       atk:          { nx: 0.90, ny: 0.78, scale: 1.0,  opacity: 0.94 },
@@ -255,6 +259,9 @@ export function sanitizeMobileHUDConfig(raw: unknown): MobileHUDConfig {
       : '2-finger';
   const base = createMobileHUDPreset(preset);
   if (typeof parsed.snapGrid === 'boolean') base.snapGrid = parsed.snapGrid;
+  if (typeof parsed.specialSelectorLocked === 'boolean') {
+    base.specialSelectorLocked = parsed.specialSelectorLocked;
+  }
   // Auto-upgrade legacy v1 layouts to non-overlapping ergonomic v2 coordinates cleanly
   if (parsed.version !== MOBILE_HUD_VERSION) {
     return base;

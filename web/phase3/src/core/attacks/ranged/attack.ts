@@ -1,9 +1,14 @@
 import { BASE_HEX_RADIUS } from '../../constants';
 import { clamp } from '../../math/hexMath';
-import { computeRangedKineticEnergy, getActiveAnchorDist } from '../../world/structure';
+import { computeRangedKineticEnergy, getActiveAnchorDist, isRangedSniperActive } from '../../world/structure';
+import { fireRangedSniperShot } from './specials/sniperStage';
 import type { AttackExecuteContext } from '../types';
 
 export function executeRangedAttack({ state, fighter, angle, strength }: AttackExecuteContext): void {
+  if (isRangedSniperActive(fighter)) {
+    fireRangedSniperShot(state, fighter, angle);
+    return;
+  }
   if (fighter.attackAnim) return;
   const speedScale = Math.pow(fighter.currentScale, -0.5);
   const R = BASE_HEX_RADIUS * fighter.currentScale;

@@ -1,13 +1,16 @@
+import { getFighterSelectedSpecialInfo, getSpecialSkillById } from '@attacks/index';
+import { getLooseLaunchRange } from '@attacks/loose/attack';
 import { BASE_HEX_RADIUS, DASH_DURATION, DASH_SPEED, PLAYER_RADIUS } from '@core/constants';
 import { clamp } from '@core/math/hexMath';
-import { getLooseLaunchRange } from '@attacks/loose/attack';
 import {
   computeHexWallPositions,
   getActiveAnchorDist,
   getActiveStance,
   isDefenseFortressActive,
   isDefenseHexWallActive,
+  isRangedSniperActive,
 } from '@core/world/structure';
+import type { LiveInputState } from '@input/inputManager';
 import { drawHexPolygon } from '@render/world/arenaRenderer';
 import type { Fighter } from '@core/types';
 import type { ReticleStyle } from '@storage/profiles';
@@ -18,9 +21,12 @@ export function renderSkillIndicator(
   isCanceling: boolean,
   isDesktop = false,
 ): void {
-  // Hide normal aiming indicator during Guided Ranged Special (replaced by dashed weapon silhouette!)
+  // Hide normal aiming indicator during Guided Ranged Special or Sniper Stage (replaced by custom stage visual!)
   const stance = getActiveStance(f);
-  if (stance === 'ranged' && f.attackAnim?.type === 'ranged' && f.attackAnim.phase === 'guided') {
+  if (
+    isRangedSniperActive(f) ||
+    (stance === 'ranged' && f.attackAnim?.type === 'ranged' && f.attackAnim.phase === 'guided')
+  ) {
     return;
   }
 
@@ -158,6 +164,84 @@ export function renderSkillIndicator(
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+export function renderSpecialAimIndicator(
+  ctx: CanvasRenderingContext2D,
+  f: Fighter,
+  live: LiveInputState,
+): void {
+  const sr = live.specialRadial;
+  if (sr.source !== 'touch' || (sr.phase !== 'aiming' && sr.phase !== 'reselect_armed')) return;
+
+  const skill =
+    (sr.lockedSkillId ? getSpecialSkillById(sr.lockedSkillId) : undefined) ??
+    getFighterSelectedSpecialInfo(f).skill;
+  const isCanceling = live.cancelHovered;
+  const stroke = isCanceling ? '#fb7185' : skill.color;
+  const targeting = skill.targeting ?? 'instant';
+  const ang = sr.aimAngle;
+
+  ctx.save();
+  ctx.strokeStyle = stroke;
+  ctx.fillStyle = isCanceling ? 'rgba(251, 113, 133, 0.18)' : `${skill.color}29`;
+  ctx.lineWidth = 2.4;
+  if (isCanceling) ctx.setLineDash([7, 5]);
+
+  if (targeting === 'ground') {
+    const range = (skill.aimRange ?? 360) * clamp(sr.aimStrength, 0.25, 1.0);
+    const radius = skill.aimRadius ?? 64;
+    const tx = f.x + Math.cos(ang) * range;
+    const ty = f.y + Math.sin(ang) * range;
+    ctx.beginPath();
+    ctx.moveTo(f.x, f.y);
+    ctx.lineTo(tx, ty);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(tx, ty, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  } else if (targeting === 'direction') {
+    const range = skill.aimRange ?? 380;
+    const halfW = BASE_HEX_RADIUS * f.currentScale * 1.15;
+    ctx.translate(f.x, f.y);
+    ctx.rotate(ang);
+    ctx.beginPath();
+    ctx.rect(PLAYER_RADIUS, -halfW, range - 18, halfW * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(PLAYER_RADIUS + range - 18, -halfW * 1.35);
+    ctx.lineTo(PLAYER_RADIUS + range + 6, 0);
+    ctx.lineTo(PLAYER_RADIUS + range - 18, halfW * 1.35);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  } else {
+    // Instant Ulti: subtle aura ring around fighter + directional facing arrow
+    const ringR = PLAYER_RADIUS + 18;
+    ctx.beginPath();
+    ctx.arc(f.x, f.y, ringR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    const tipDist = ringR + 28;
+    const tx = f.x + Math.cos(ang) * tipDist;
+    const ty = f.y + Math.sin(ang) * tipDist;
+    ctx.beginPath();
+    ctx.moveTo(f.x + Math.cos(ang) * ringR, f.y + Math.sin(ang) * ringR);
+    ctx.lineTo(tx, ty);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(tx, ty, 5.5, 0, Math.PI * 2);
+    ctx.fillStyle = stroke;
+    ctx.fill();
   }
 
   ctx.restore();

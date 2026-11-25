@@ -19,7 +19,13 @@ import {
   triggerFighterSpecial,
   triggerSmartRecall,
 } from '@attacks/index';
-import { getActiveStance, isDefenseFortressActive, isDefenseHexWallActive } from '@core/world/structure';
+import {
+  clampAngleToSniperCone,
+  getActiveStance,
+  isDefenseFortressActive,
+  isDefenseHexWallActive,
+  isRangedSniperActive,
+} from '@core/world/structure';
 import type { AttackModeId, FireMode, FormKey, GuidedSteerInput, MatchState, RotMode } from '@core/types';
 import type { ContinuousInputPacket, PvPAction } from '@net/protocol';
 import type { MobileHUDConfig, PCControlConfig } from '@storage/profiles';
@@ -27,7 +33,6 @@ import { getViewportSize } from '@ui/common/fullscreen';
 import {
   computeDesktopDockLayout,
   computeSmartMobileLayout,
-  getMobileSpecialRadialPos,
   getPCSpecialOptionRects,
   getPCSpecialRadialPos,
   type MobileComputedLayout,
@@ -35,6 +40,18 @@ import {
   type Rect,
   type SafeInsets,
 } from './hudPresets';
+import {
+  advanceMobileSpecialHold,
+  createIdleSpecialRadialState,
+  resetSpecialRadialState,
+  SPECIAL_HOLD_MS,
+  startMobileSpecialPress,
+  stepMobileSpecialMove,
+  type SpecialGesturePhase,
+  type SpecialRadialState,
+} from './specialGesture';
+
+export type { SpecialGesturePhase, SpecialRadialState };
 
 export type InputMode = 'desktop' | 'touch';
 
@@ -42,19 +59,6 @@ export interface FormRadialOption {
   id: FormKey;
   angle: number;
 }
-
-export interface SpecialRadialState {
-  active: boolean;
-  source: 'touch' | 'pc' | null;
-  pointerId: number | null;
-  originX: number;
-  originY: number;
-  pressTimeMs: number;
-  hoverIdx: number;
-  modeId: AttackModeId;
-}
-
-const SPECIAL_HOLD_MS = 165;
 
 export interface LiveInputState {
   mode: InputMode;
@@ -117,6 +121,7 @@ export class InputManager {
   private onAudioUnlock: () => void;
   private isPvPActive: () => boolean;
   private onPvPAction: (action: PvPAction) => void;
+  private onToggleSpecialLock?: () => boolean;
 
   constructor(opts: {
     canvas: HTMLCanvasElement;
@@ -128,6 +133,7 @@ export class InputManager {
     onAudioUnlock: () => void;
     isPvPActive?: () => boolean;
     onPvPAction?: (action: PvPAction) => void;
+    onToggleSpecialLock?: () => boolean;
   }) {
     this.canvas = opts.canvas;
     this.getState = opts.getState;
@@ -138,6 +144,7 @@ export class InputManager {
     this.onAudioUnlock = opts.onAudioUnlock;
     this.isPvPActive = opts.isPvPActive ?? (() => false);
     this.onPvPAction = opts.onPvPAction ?? (() => {});
+    this.onToggleSpecialLock = opts.onToggleSpecialLock;
 
     const isCoarse = typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches;
     const { vw, vh } = getViewportSize();
@@ -166,16 +173,7 @@ export class InputManager {
           { id: 'slot3', angle: -Math.PI * 0.20 },
         ],
       },
-      specialRadial: {
-        active: false,
-        source: null,
-        pointerId: null,
-        originX: 0,
-        originY: 0,
-        pressTimeMs: 0,
-        hoverIdx: -1,
-        modeId: 'loose',
-      },
+      specialRadial: createIdleSpecialRadialState(),
       pcPaint: { pointerId: null, paintValue: true, lastSeg: -1 },
       desktopAimPointerId: null,
       desktopGuidedPointerId: null,
@@ -390,7 +388,10 @@ export class InputManager {
         executeFighterDash(state, player, action.angle);
         break;
       case 'special':
-        triggerFighterSpecial(state, player, applyHexDurabilityLoss, action.skillId);
+        triggerFighterSpecial(state, player, applyHexDurabilityLoss, action.skillId, {
+          angle: action.angle,
+          strength: action.strength,
+        });
         break;
       case 'set_special_skill':
         setFighterSpecialSkill(state, player, action.skillId, action.modeId);
@@ -452,12 +453,21 @@ export class InputManager {
 
     // Check Hold-to-Open Special Radial on both Mobile & PC
     const sr = this.live.specialRadial;
-    if (sr.source !== null && !sr.active && performance.now() - sr.pressTimeMs >= SPECIAL_HOLD_MS) {
+    if (sr.source === 'touch') {
+      const spInfo = getFighterSelectedSpecialInfo(player);
+      advanceMobileSpecialHold(sr, {
+        layout: this.live.mobileLayout,
+        selectedIndex: spInfo.index,
+        selectedSkillId: spInfo.skill.id,
+        skillCount: spInfo.skills.length,
+        selectorLocked: Boolean(this.getMobileConfig().specialSelectorLocked),
+        nowMs: performance.now(),
+      });
+    } else if (sr.source === 'pc' && !sr.active && performance.now() - sr.pressTimeMs >= SPECIAL_HOLD_MS) {
       sr.active = true;
-      if (sr.source === 'pc') {
-        sr.originX = clamp(this.live.mouse.px, 130, Math.max(130, this.live.vw - 130));
-        sr.originY = clamp(this.live.mouse.py, 130, Math.max(130, this.live.vh - 130));
-      }
+      sr.phase = 'selecting';
+      sr.originX = clamp(this.live.mouse.px, 130, Math.max(130, this.live.vw - 130));
+      sr.originY = clamp(this.live.mouse.py, 130, Math.max(130, this.live.vh - 130));
     }
     if (sr.active && sr.source === 'pc') {
       this.updatePCSpecialRadialHover(this.live.mouse.px, this.live.mouse.py);
@@ -484,11 +494,15 @@ export class InputManager {
     if (this.keys.has(kb.moveRight) || this.keys.has('arrowright')) mx += 1;
 
     const mLen = Math.hypot(mx, my);
+    const isTouchAimingSpecial =
+      this.live.specialRadial.source === 'touch' &&
+      (this.live.specialRadial.phase === 'aiming' || this.live.specialRadial.phase === 'reselect_armed') &&
+      this.live.specialRadial.aimMoved;
     if (mLen > 0.04) {
       const norm = Math.min(1, mLen);
       player.vx = (mx / mLen) * PLAYER_MOVE_SPEED * norm;
       player.vy = (my / mLen) * PLAYER_MOVE_SPEED * norm;
-      if (!player.isAiming && this.live.atk.pointerId === null && this.live.mode === 'touch') {
+      if (!player.isAiming && this.live.atk.pointerId === null && !isTouchAimingSpecial && this.live.mode === 'touch') {
         player.facing = Math.atan2(my, mx);
       }
     } else {
@@ -511,6 +525,8 @@ export class InputManager {
           if (diff < 0) diff += Math.PI * 2;
           diff -= Math.PI;
           player.facing += clamp(diff, -3.4 * dt, 3.4 * dt);
+        } else if (isRangedSniperActive(player)) {
+          player.facing = clampAngleToSniperCone(player, cursorAng);
         } else if (!player.attackAnim || player.attackAnim.type === 'ranged') {
           player.facing = cursorAng;
         }
@@ -536,31 +552,7 @@ export class InputManager {
   }
 
   private resetSpecialRadial(): void {
-    this.live.specialRadial.active = false;
-    this.live.specialRadial.source = null;
-    this.live.specialRadial.pointerId = null;
-    this.live.specialRadial.hoverIdx = -1;
-  }
-
-  private updateMobileSpecialRadialHover(px: number, py: number): void {
-    const sr = this.live.specialRadial;
-    const m = this.live.mobileLayout;
-    const skills = getSpecialSkillsForMode(sr.modeId);
-    if (dist(px, py, m.special.cx, m.special.cy) <= m.special.r * 0.80) {
-      sr.hoverIdx = -1;
-      return;
-    }
-    let hovered = -1;
-    let bestD = Infinity;
-    for (let idx = 0; idx < skills.length; idx++) {
-      const pos = getMobileSpecialRadialPos(m.special, m.baseScale, m.specialRotRad, idx, skills.length);
-      const d = dist(px, py, pos.x, pos.y);
-      if (d < bestD && d < pos.r * 2.25) {
-        bestD = d;
-        hovered = idx;
-      }
-    }
-    sr.hoverIdx = hovered;
+    resetSpecialRadialState(this.live.specialRadial);
   }
 
   private updatePCSpecialRadialHover(px: number, py: number): void {
@@ -646,13 +638,18 @@ export class InputManager {
     this.live.atk.knobX = d > maxR ? atk.cx + (dx / d) * maxR : px;
     this.live.atk.knobY = d > maxR ? atk.cy + (dy / d) * maxR : py;
     if (d > 8) {
-      state.player.aimAngle = Math.atan2(dy, dx);
+      const rawAng = Math.atan2(dy, dx);
+      state.player.aimAngle = isRangedSniperActive(state.player)
+        ? clampAngleToSniperCone(state.player, rawAng)
+        : rawAng;
       if (!isDefenseFortressActive(state.player)) {
         state.player.facing = state.player.aimAngle;
       }
       state.player.aimStrength = clamp(d / (maxR * 1.25), 0.12, 1.0);
     } else {
-      state.player.aimAngle = state.player.facing;
+      state.player.aimAngle = isRangedSniperActive(state.player)
+        ? clampAngleToSniperCone(state.player, state.player.facing)
+        : state.player.facing;
       state.player.aimStrength = 0.5;
     }
     const isPureDefense =
@@ -828,12 +825,31 @@ export class InputManager {
         this.live.specialRadial.source === 'touch' &&
         e.pointerId === this.live.specialRadial.pointerId
       ) {
+        const sr = this.live.specialRadial;
         const m = this.live.mobileLayout;
-        if (!this.live.specialRadial.active && dist(px, py, m.special.cx, m.special.cy) > m.special.r * 0.72) {
-          this.live.specialRadial.active = true;
+        const skills = getSpecialSkillsForMode(sr.modeId);
+        const spInfo = getFighterSelectedSpecialInfo(state.player);
+        const res = stepMobileSpecialMove(sr, {
+          px,
+          py,
+          nowMs: performance.now(),
+          layout: m,
+          skills,
+          selectedIndex: spInfo.index,
+          selectedSkillId: spInfo.skill.id,
+          selectorLocked: Boolean(this.getMobileConfig().specialSelectorLocked),
+          defaultFacing: state.player.facing,
+          canRotateFacing: !isDefenseFortressActive(state.player),
+        });
+        this.live.cancelHovered = res.cancelHovered;
+        if (res.nextFacing !== undefined) {
+          state.player.facing = res.nextFacing;
         }
-        if (this.live.specialRadial.active) {
-          this.updateMobileSpecialRadialHover(px, py);
+        if (res.lockedNow) {
+          state.events.push({ type: 'sfx', kind: 'uiClick' });
+          state.events.push({ type: 'haptic', pattern: [8], target: 'player' });
+        } else if (res.unlockedToSelect) {
+          state.events.push({ type: 'sfx', kind: 'uiClick' });
         }
       }
     });
@@ -908,13 +924,12 @@ export class InputManager {
         this.dispatchAction({ kind: 'special' });
       } else if (k === kb.cycleSpecial) {
         this.live.specialRadial = {
-          active: false,
+          ...createIdleSpecialRadialState(),
+          phase: 'selecting',
           source: 'pc',
-          pointerId: null,
           originX: clamp(this.live.mouse.px, 130, Math.max(130, this.live.vw - 130)),
           originY: clamp(this.live.mouse.py, 130, Math.max(130, this.live.vh - 130)),
           pressTimeMs: performance.now(),
-          hoverIdx: -1,
           modeId: getFighterAttackModeId(state.player),
         };
       } else if (k === kb.cycleFire && state.player.form === 'loose') {
@@ -1076,6 +1091,18 @@ export class InputManager {
       return;
     }
 
+    // Sniper Stage (Ranged Ulti #2): cursor aims laser sight inside cone, left-click fires immediately!
+    if (isRangedSniperActive(player)) {
+      const world = this.screenToWorld(px, py);
+      const cursorAng = Math.atan2(world.wy - player.y, world.wx - player.x);
+      this.dispatchAction({
+        kind: 'attack',
+        angle: clampAngleToSniperCone(player, cursorAng),
+        strength: 1.0,
+      });
+      return;
+    }
+
     // Pure Defense Stance cannot trigger normal attacks (only Pháo Đài / Tường Lục Giác can trigger)
     if (getActiveStance(player) === 'defense' && !isDefenseFortressActive(player)) {
       return;
@@ -1109,18 +1136,39 @@ export class InputManager {
       }
     }
 
-    // 3. Special Skill Button (Tap to cast · Hold & drag to select / swap Ulti)
-    if (dist(px, py, m.special.cx, m.special.cy) <= m.special.r + 8) {
-      this.live.specialRadial = {
-        active: false,
-        source: 'touch',
+    // 3a. Special Lock Toggle Button (Locks selector to bypass choice and enter Aim directly)
+    if (dist(px, py, m.specialLock.cx, m.specialLock.cy) <= m.specialLock.r + 7) {
+      this.onToggleSpecialLock?.();
+      this.recomputeLayouts();
+      state.events.push({ type: 'sfx', kind: 'uiClick' });
+      return;
+    }
+
+    // 3b. Corner Number Badge quick-cycle (allows fast Ulti swap even when Lock is ON!)
+    const spInfo = getFighterSelectedSpecialInfo(player);
+    const dBadge = dist(px, py, m.specialBadge.cx, m.specialBadge.cy);
+    const dSpecial = dist(px, py, m.special.cx, m.special.cy);
+    if (spInfo.skills.length > 1 && dBadge <= m.specialBadge.r + 6 && dBadge < dSpecial * 0.85) {
+      const next = spInfo.skills[(spInfo.index + 1) % spInfo.skills.length];
+      if (next) {
+        this.dispatchAction({ kind: 'set_special_skill', modeId: spInfo.modeId, skillId: next.id });
+      }
+      return;
+    }
+
+    // 3c. Special Skill Button (Tap to cast · Hold & drag to select -> lock -> dynamic-pivot aim)
+    if (dSpecial <= m.special.r + 8) {
+      startMobileSpecialPress(this.live.specialRadial, {
         pointerId: e.pointerId,
-        originX: m.special.cx,
-        originY: m.special.cy,
-        pressTimeMs: performance.now(),
-        hoverIdx: -1,
+        layout: m,
         modeId: getFighterAttackModeId(player),
-      };
+        selectedIndex: spInfo.index,
+        selectedSkillId: spInfo.skill.id,
+        skillCount: spInfo.skills.length,
+        selectorLocked: Boolean(this.getMobileConfig().specialSelectorLocked),
+        defaultFacing: player.facing,
+        nowMs: performance.now(),
+      });
       this.canvas.setPointerCapture(e.pointerId);
       return;
     }
@@ -1274,16 +1322,36 @@ export class InputManager {
       this.live.specialRadial.source === 'touch' &&
       e.pointerId === this.live.specialRadial.pointerId
     ) {
-      const wasActive = this.live.specialRadial.active;
+      const phase = this.live.specialRadial.phase;
       const hoverIdx = this.live.specialRadial.hoverIdx;
+      const lockedSkillId = this.live.specialRadial.lockedSkillId;
       const modeId = this.live.specialRadial.modeId;
+      const aimAngle = this.live.specialRadial.aimAngle;
+      const aimStrength = this.live.specialRadial.aimStrength;
+      const canceled = isCancel || this.live.cancelHovered;
+      this.live.cancelHovered = false;
       this.resetSpecialRadial();
-      if (!isCancel) {
-        if (!wasActive) {
-          this.dispatchAction({ kind: 'special' });
-        } else {
-          this.commitSpecialRadialSelection(modeId, hoverIdx);
+
+      if (canceled || phase === 'reselect_armed') {
+        state.events.push({ type: 'sfx', kind: 'cancel' });
+        return;
+      }
+
+      if (phase === 'pending') {
+        this.dispatchAction({ kind: 'special' });
+      } else if (phase === 'aiming') {
+        const chosenId = lockedSkillId ?? getFighterSelectedSpecialInfo(player).skill.id;
+        this.dispatchAction({ kind: 'set_special_skill', modeId, skillId: chosenId });
+        if ((player.specialCooldown <= 0 && !player.specialActive) || Boolean(player.specialActive)) {
+          this.dispatchAction({
+            kind: 'special',
+            skillId: chosenId,
+            angle: aimAngle,
+            strength: aimStrength,
+          });
         }
+      } else if (phase === 'selecting') {
+        this.commitSpecialRadialSelection(modeId, hoverIdx);
       }
     }
   }

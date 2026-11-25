@@ -16,6 +16,11 @@ import {
 import { triggerShieldMiniPulse } from '../attacks/defense/specials/counterFortress';
 import { performMeleeParrySteal } from '../attacks/melee/specials/parryDisarm';
 import {
+  SNIPER_SLOW_DURATION,
+  SNIPER_SLOW_FACTOR,
+  spendSniperHex,
+} from '../attacks/ranged/specials/sniperStage';
+import {
   computeLooseKineticEnergy,
   getActiveStance,
   getAnchoredNeighbors,
@@ -223,9 +228,11 @@ export function damageFighterBody(
 
   const mode = attHex.state === 'STOLEN_FLY' || attHex.state === 'STOLEN_RETURN'
     ? 'melee'
-    : attacker.form === 'loose'
-      ? 'loose'
-      : getActiveStance(attacker) ?? 'melee';
+    : attHex.state === 'SNIPER_SHOT'
+      ? 'ranged'
+      : attacker.form === 'loose'
+        ? 'loose'
+        : getActiveStance(attacker) ?? 'melee';
 
   if (attacker.id === 'player') {
     state.stats.dmgDealt += dmg;
@@ -441,6 +448,41 @@ function resolveAttacksVsWalls(state: MatchState): void {
       continue;
     }
 
+    // 1b. Sniper Shot Projectiles vs Enemy Walls
+    for (const ah of att.hexes) {
+      if (ah.state !== 'SNIPER_SHOT') continue;
+      if (isCircleBlockedByObstacle(state.obstacles, ah.x, ah.y, attR * 0.35)) continue;
+      for (const w of state.walls) {
+        if (w.ownerId === att.id) continue;
+        for (const wh of w.hexes) {
+          if (wh.broken) continue;
+          if (dist(ah.x, ah.y, wh.x, wh.y) >= (attR + wallR) * 0.96) continue;
+          const attStats = getEffectiveHexStats(att, ah);
+          const adj = getWallAdjCount(w, wh);
+          const rWall = MATERIALS.base.hard * (1 + 0.1 * adj) * 1.4;
+          const isFourth = Boolean(ah.sniperEmpowered);
+
+          state.events.push({ type: 'sparks', x: wh.x, y: wh.y, color: isFourth ? '#fbbf24' : '#2dd4bf', count: 8, speed: 230, size: 2.8 });
+          if (ah.energy < rWall) {
+            applyWallHexDurabilityLoss(state, wh, w.ownerId, Math.round(attStats.damage * (isFourth ? 2.1 : 1.35)));
+            state.events.push({ type: 'sfx', kind: 'clash' });
+            spendSniperHex(att, ah);
+          } else {
+            applyWallHexDurabilityLoss(state, wh, w.ownerId, wh.hp + 1);
+            ah.energy = Math.max(0, ah.energy - rWall);
+            const ratio = clamp(ah.energy / Math.max(1, ah.initialEnergy), 0.45, 1.0);
+            const spd = (ah.launchSpeed || 1450) * ratio;
+            const vLen = Math.hypot(ah.vx, ah.vy) || 1;
+            ah.vx = (ah.vx / vLen) * spd;
+            ah.vy = (ah.vy / vLen) * spd;
+            state.events.push({ type: 'floatingText', x: wh.x, y: wh.y - 28, text: 'XUYÊN TƯỜNG!', color: '#fbbf24', scale: 0.9 });
+          }
+          break;
+        }
+        if (ah.state !== 'SNIPER_SHOT') break;
+      }
+    }
+
     // 2. Melee / Loose Projectiles vs Enemy Walls
     for (const ah of att.hexes) {
       if (ah.state === 'BROKEN' || isHexStolen(ah) || ah.hitCooldown > 0) continue;
@@ -551,7 +593,15 @@ export function resolveCombatCollisions(state: MatchState): void {
       for (const ah of spearHexes) {
         if (isCircleBlockedByObstacle(state.obstacles, ah.x, ah.y, attR * 0.35)) continue;
         for (const dh of def.hexes) {
-          if (dh.state === 'BROKEN' || isHexStolen(dh) || (!isGuided && anim.hitHexIds.has(dh.id))) continue;
+          if (
+            dh.state === 'BROKEN' ||
+            isHexStolen(dh) ||
+            dh.state === 'SNIPER_SPENT' ||
+            dh.state === 'SNIPER_RETURN' ||
+            (!isGuided && anim.hitHexIds.has(dh.id))
+          ) {
+            continue;
+          }
           if (isGuided && anim.guidedStunTimer > 0) continue;
           const d = dist(ah.x, ah.y, dh.x, dh.y);
           if (d < (attR + defR) * 0.92) {
@@ -686,9 +736,107 @@ export function resolveCombatCollisions(state: MatchState): void {
       continue;
     }
 
+    // A2. RANGED SNIPER STAGE BULLETS (4-Rule Emergent Collision Pipeline + Hit Slow)
+    for (const ah of att.hexes) {
+      if (ah.state !== 'SNIPER_SHOT') continue;
+      if (isCircleBlockedByObstacle(state.obstacles, ah.x, ah.y, attR * 0.35)) continue;
+
+      const isFourth = Boolean(ah.sniperEmpowered);
+      const defCandidates: Array<{ dh: HexEntity; d: number }> = [];
+      for (const dh of def.hexes) {
+        if (
+          dh.state === 'BROKEN' ||
+          isHexStolen(dh) ||
+          dh.state === 'SNIPER_SPENT' ||
+          dh.state === 'SNIPER_RETURN'
+        ) {
+          continue;
+        }
+        const d = dist(ah.x, ah.y, dh.x, dh.y);
+        if (d < (attR + defR) * 0.96) {
+          if (segmentIntersectsAnyObstacle(state.obstacles, ah.x, ah.y, dh.x, dh.y, 0)) continue;
+          defCandidates.push({ dh, d });
+        }
+      }
+      defCandidates.sort((a, b) => a.d - b.d);
+
+      for (const { dh } of defCandidates) {
+        if (dh.state === 'BROKEN' || isHexStolen(dh)) continue;
+        const vLen = Math.hypot(ah.vx, ah.vy) || 1;
+        const dirX = ah.vx / vLen;
+        const dirY = ah.vy / vLen;
+        const { nx, ny } = computeDefenseNormal(def, dh, ah);
+        const rawCos = clamp(-(dirX * nx + dirY * ny), 0, 1);
+        const theta = computeEffectiveImpactAngle(att, def, Math.acos(rawCos), dh);
+        const cosTheta = Math.max(0, Math.cos(theta));
+        const eEff = ah.energy * cosTheta;
+        const rDef = getStructuralResistance(def, dh);
+
+        if (theta > DEFLECT_ANGLE_RAD && eEff < rDef) {
+          chargeShieldFortress(state, att, def, ah.energy * 0.7);
+          damageHex(state, att, ah, def, dh, 0.35);
+          state.events.push({ type: 'floatingText', x: dh.x, y: dh.y - 16, text: 'TRƯỢT!', color: '#fbbf24', scale: 0.85 });
+          state.events.push({ type: 'sfx', kind: 'bounce' });
+          spendSniperHex(att, ah);
+          break;
+        } else if (eEff < rDef) {
+          chargeShieldFortress(state, att, def, ah.energy);
+          damageHex(state, att, ah, def, dh, isFourth ? 1.85 : 1.25);
+          def.kbX += dirX * 115;
+          def.kbY += dirY * 115;
+          state.events.push({ type: 'floatingText', x: dh.x, y: dh.y - 16, text: 'CHẶN!', color: '#34d399', scale: 0.90 });
+          spendSniperHex(att, ah);
+          break;
+        } else {
+          damageHex(state, att, ah, def, dh, isFourth ? 1.85 : 1.25, { forceShatter: true });
+          const remE = Math.max(0, eEff - rDef);
+          ah.energy = remE;
+          const ratio = clamp(remE / Math.max(1, ah.initialEnergy), 0.45, 1.0);
+          const spd = (ah.launchSpeed || 1450) * ratio;
+          ah.vx = dirX * spd;
+          ah.vy = dirY * spd;
+          state.events.push({ type: 'floatingText', x: dh.x, y: dh.y - 20, text: 'XUYÊN PHÁ!', color: '#fbbf24', scale: 0.96 });
+        }
+      }
+
+      if (ah.state !== 'SNIPER_SHOT') continue;
+
+      const dBody = dist(ah.x, ah.y, def.x, def.y);
+      if (dBody < attR * 0.90 + PLAYER_RADIUS) {
+        if (segmentIntersectsAnyObstacle(state.obstacles, ah.x, ah.y, def.x, def.y, 0)) continue;
+        if (isBodyShieldedAlongPath(ah.x, ah.y, def, defR, state.walls)) {
+          spendSniperHex(att, ah);
+          continue;
+        }
+        const energyRatio = clamp(ah.energy / Math.max(1, ah.initialEnergy), 0.35, 1.0);
+        const mult = (isFourth ? 2.45 : 1.35) * energyRatio;
+        damageFighterBody(state, att, ah, def, mult);
+        def.slowTimer = Math.max(def.slowTimer, SNIPER_SLOW_DURATION);
+        def.slowFactor = Math.min(def.slowFactor, SNIPER_SLOW_FACTOR);
+        if (isFourth) {
+          state.events.push({ type: 'shockwave', x: def.x, y: def.y, r: 12, maxR: 84, life: 0.28, color: '#fbbf24' });
+          state.events.push({ type: 'floatingText', x: def.x, y: def.y - 34, text: 'PHÁT THỨ 4!', color: '#fbbf24', scale: 1.22 });
+          state.hitStopTimer = Math.max(state.hitStopTimer, 0.05);
+          state.events.push({ type: 'hitStop', duration: 0.05 });
+          state.events.push({ type: 'shake', amount: 11 });
+          state.events.push({ type: 'sfx', kind: 'pierce' });
+        }
+        spendSniperHex(att, ah);
+      }
+    }
+
     // B. LOOSE HEXES & ANCHORED MELEE / DEFENSE STANCE
     for (const ah of att.hexes) {
-      if (ah.state === 'BROKEN' || isHexStolen(ah) || ah.hitCooldown > 0) continue;
+      if (
+        ah.state === 'BROKEN' ||
+        isHexStolen(ah) ||
+        ah.state === 'SNIPER_SHOT' ||
+        ah.state === 'SNIPER_SPENT' ||
+        ah.state === 'SNIPER_RETURN' ||
+        ah.hitCooldown > 0
+      ) {
+        continue;
+      }
 
       const isLooseOverdriveOrbit = ah.state === 'ORBIT' && isLooseGravityFieldActive(att);
       const isLooseAttacking =
@@ -716,7 +864,14 @@ export function resolveCombatCollisions(state: MatchState): void {
       let blockedByHex = false;
       const defCandidates: Array<{ dh: HexEntity; d: number }> = [];
       for (const dh of def.hexes) {
-        if (dh.state === 'BROKEN' || isHexStolen(dh)) continue;
+        if (
+          dh.state === 'BROKEN' ||
+          isHexStolen(dh) ||
+          dh.state === 'SNIPER_SPENT' ||
+          dh.state === 'SNIPER_RETURN'
+        ) {
+          continue;
+        }
         if (isHighFlightRecall && !isHexAnchored(def, dh)) continue;
         const d = dist(ah.x, ah.y, dh.x, dh.y);
         if (d < (attR + defR) * 0.90) {

@@ -25,11 +25,15 @@ export interface AttackExecuteContext {
   applyHexDurabilityLoss?: ApplyHexDurabilityLossFn;
 }
 
+export type SpecialTargetingMode = 'instant' | 'direction' | 'ground';
+
 export interface SpecialSkillContext {
   state: MatchState;
   fighter: Fighter;
   opponent: Fighter;
   applyHexDurabilityLoss?: ApplyHexDurabilityLossFn;
+  aimAngle?: number;
+  aimStrength?: number;
 }
 
 export interface SpecialSkillMeta {
@@ -42,6 +46,9 @@ export interface SpecialSkillMeta {
   disarmDur?: number;
   color: string;
   desc: string;
+  targeting?: SpecialTargetingMode;
+  aimRange?: number;
+  aimRadius?: number;
 }
 
 export interface SpecialSkillDefinition {
@@ -54,6 +61,9 @@ export interface SpecialSkillDefinition {
   disarmDur?: number;
   color: string;
   desc: string;
+  targeting?: SpecialTargetingMode;
+  aimRange?: number;
+  aimRadius?: number;
   /** Activates the skill. Return false to abort activation without consuming cooldown. */
   activate: (ctx: SpecialSkillContext) => boolean;
   /** Optional handler when pressing Special again while this skill is already active. */
@@ -90,6 +100,7 @@ export const BUILTIN_SPECIAL_SKILL_IDS = {
   LOOSE_GRAVITY_FIELD: 'loose:gravity_field',
   LOOSE_PRISM_WEB: 'loose:prism_web',
   RANGED_GUIDED_SPEAR: 'ranged:guided_spear',
+  RANGED_SNIPER_STAGE: 'ranged:sniper_stage',
   MELEE_PARRY_DISARM: 'melee:parry_disarm',
   DEFENSE_COUNTER_FORTRESS: 'defense:counter_fortress',
   DEFENSE_HEX_WALL: 'defense:hex_wall',

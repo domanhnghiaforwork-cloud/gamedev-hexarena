@@ -19,7 +19,10 @@ export type HexState =
   | 'BROKEN'
   | 'STOLEN_FLY'
   | 'STOLEN_FLOOR'
-  | 'STOLEN_RETURN';
+  | 'STOLEN_RETURN'
+  | 'SNIPER_SHOT'
+  | 'SNIPER_SPENT'
+  | 'SNIPER_RETURN';
 
 export interface HexMaterialSpec {
   id: MaterialId;
@@ -143,6 +146,7 @@ export interface HexEntity {
   energy: number;
   stolenById: FighterId | null;
   stolenTimer: number;
+  sniperEmpowered?: boolean;
 
   // Assembled axial structure & morph
   q: number;
@@ -174,6 +178,10 @@ export interface SpecialActiveState {
   storedEnergy?: number;
   miniPulseCd?: number;
   prevScale?: ScaleTier;
+  coneAngle?: number;
+  coneHalfAngle?: number;
+  shotsFired?: number;
+  totalAmmo?: number;
 }
 
 export interface RangedAttackAnim {
@@ -262,6 +270,11 @@ export interface Fighter {
   hp: number;
   maxHp: number;
   damageFlash: number;
+  slowTimer: number;
+  slowFactor: number;
+  recoilTimer: number;
+  recoilAngle: number;
+  recoilAmp: number;
 
   // Loadout & active configuration
   loadout: PlayerLoadout;

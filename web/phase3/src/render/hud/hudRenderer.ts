@@ -3,10 +3,17 @@ import { DASH_COOLDOWN } from '@core/constants';
 import { clamp } from '@core/math/hexMath';
 import {
   getFighterSelectedSpecialInfo,
+  getSpecialSkillById,
   getSpecialSkillsForMode,
   STANCE_META,
 } from '@attacks/index';
-import { getActiveBlueprint, isDefenseFortressActive, isDefenseHexWallActive, isSlotKey } from '@core/world/structure';
+import {
+  getActiveBlueprint,
+  isDefenseFortressActive,
+  isDefenseHexWallActive,
+  isRangedSniperActive,
+  isSlotKey,
+} from '@core/world/structure';
 import type { Fighter, FormKey } from '@core/types';
 import type { LiveInputState } from '@input/inputManager';
 import {
@@ -182,44 +189,62 @@ export function renderMobileCanvasHUD(
   const isDefenseStance = bp?.stance === 'defense';
   const isFortressActive = isDefenseStance && isDefenseFortressActive(player);
   const isHexWallActive = isDefenseStance && isDefenseHexWallActive(player);
-  const atkLabel = isFortressActive
-    ? 'XUNG'
-    : isHexWallActive
-      ? 'TƯỜNG'
-      : bp
-        ? STANCE_META[bp.stance].attackLabel
-        : 'PHÓNG';
+  const isSniperActive = isRangedSniperActive(player);
+  const isNextFourthShot = isSniperActive && (player.specialActive?.shotsFired ?? 0) + 1 === 4;
+  const atkLabel = isSniperActive
+    ? isNextFourthShot
+      ? 'BẮN #4'
+      : 'BẮN'
+    : isFortressActive
+      ? 'XUNG'
+      : isHexWallActive
+        ? 'TƯỜNG'
+        : bp
+          ? STANCE_META[bp.stance].attackLabel
+          : 'PHÓNG';
   ctx.save();
   ctx.globalAlpha = m.atk.opacity;
   ctx.beginPath();
   ctx.arc(m.atk.cx, m.atk.cy, m.atk.r, 0, Math.PI * 2);
-  ctx.fillStyle = isFortressActive
-    ? 'rgba(16, 185, 129, 0.42)'
-    : isHexWallActive
-      ? 'rgba(45, 212, 191, 0.36)'
-      : isDefenseStance
-        ? 'rgba(15, 23, 42, 0.66)'
-        : 'rgba(14, 116, 144, 0.42)';
+  ctx.fillStyle = isNextFourthShot
+    ? 'rgba(251, 191, 36, 0.44)'
+    : isSniperActive
+      ? 'rgba(232, 121, 249, 0.36)'
+      : isFortressActive
+        ? 'rgba(16, 185, 129, 0.42)'
+        : isHexWallActive
+          ? 'rgba(45, 212, 191, 0.36)'
+          : isDefenseStance
+            ? 'rgba(15, 23, 42, 0.66)'
+            : 'rgba(14, 116, 144, 0.42)';
   ctx.fill();
-  ctx.strokeStyle = isFortressActive
-    ? '#34d399'
-    : isHexWallActive
-      ? '#2dd4bf'
-      : isDefenseStance
-        ? 'rgba(52, 211, 153, 0.55)'
-        : '#38bdf8';
-  ctx.lineWidth = isFortressActive || isHexWallActive ? 3.0 : 2.4;
+  ctx.strokeStyle = isNextFourthShot
+    ? '#fbbf24'
+    : isSniperActive
+      ? '#e879f9'
+      : isFortressActive
+        ? '#34d399'
+        : isHexWallActive
+          ? '#2dd4bf'
+          : isDefenseStance
+            ? 'rgba(52, 211, 153, 0.55)'
+            : '#38bdf8';
+  ctx.lineWidth = isSniperActive || isFortressActive || isHexWallActive ? 3.0 : 2.4;
   ctx.stroke();
 
   ctx.beginPath();
   ctx.arc(live.atk.knobX, live.atk.knobY, m.atk.r * 0.58, 0, Math.PI * 2);
-  ctx.fillStyle = isFortressActive
-    ? 'rgba(52, 211, 153, 0.90)'
-    : isHexWallActive
-      ? 'rgba(45, 212, 191, 0.88)'
-      : isDefenseStance
-        ? 'rgba(16, 185, 129, 0.45)'
-        : 'rgba(56, 189, 248, 0.85)';
+  ctx.fillStyle = isNextFourthShot
+    ? 'rgba(251, 191, 36, 0.94)'
+    : isSniperActive
+      ? 'rgba(232, 121, 249, 0.90)'
+      : isFortressActive
+        ? 'rgba(52, 211, 153, 0.90)'
+        : isHexWallActive
+          ? 'rgba(45, 212, 191, 0.88)'
+          : isDefenseStance
+            ? 'rgba(16, 185, 129, 0.45)'
+            : 'rgba(56, 189, 248, 0.85)';
   ctx.fill();
   ctx.fillStyle = isDefenseStance && !isFortressActive && !isHexWallActive ? '#d1fae5' : '#082f49';
   ctx.font = canvasFont(900, Math.max(10, Math.round(12 * m.baseScale)));
@@ -329,9 +354,9 @@ export function renderMobileCanvasHUD(
   ctx.fillText(spText, m.special.cx, m.special.cy);
 
   // Corner Number Badge (1 / 2 / ...) indicating active Ulti slot
-  const badgeR = Math.max(8, 9.5 * m.baseScale);
-  const badgeX = m.special.cx + m.special.r * 0.68;
-  const badgeY = m.special.cy - m.special.r * 0.68;
+  const badgeR = m.specialBadge.r;
+  const badgeX = m.specialBadge.cx;
+  const badgeY = m.specialBadge.cy;
   ctx.beginPath();
   ctx.arc(badgeX, badgeY, badgeR, 0, Math.PI * 2);
   ctx.fillStyle = '#0f172a';
@@ -342,76 +367,184 @@ export function renderMobileCanvasHUD(
   ctx.fillStyle = '#f8fafc';
   ctx.font = canvasFont(900, Math.max(8.5, Math.round(10 * m.baseScale)));
   ctx.fillText(`${spInfo.index + 1}`, badgeX, badgeY + 0.5);
+
+  // Lock Selector Toggle Chip beside Ulti Button
+  const lockPos = m.specialLock;
+  const isLockOn = m.specialLockLocked;
+  ctx.beginPath();
+  ctx.arc(lockPos.cx, lockPos.cy, lockPos.r, 0, Math.PI * 2);
+  ctx.fillStyle = isLockOn ? 'rgba(245, 158, 11, 0.28)' : 'rgba(15, 23, 42, 0.86)';
+  ctx.fill();
+  ctx.strokeStyle = isLockOn ? '#fbbf24' : 'rgba(148, 163, 184, 0.52)';
+  ctx.lineWidth = isLockOn ? 1.9 : 1.3;
+  ctx.stroke();
+
+  // Vector Padlock Icon inside lock chip
+  const lr = lockPos.r * 0.44;
+  const bw = lr * 1.45;
+  const bh = lr * 1.15;
+  const bx = lockPos.cx - bw * 0.5;
+  const by = lockPos.cy - bh * 0.2;
+  ctx.strokeStyle = isLockOn ? '#fef3c7' : '#cbd5e1';
+  ctx.fillStyle = isLockOn ? '#fbbf24' : '#94a3b8';
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  if (isLockOn) {
+    ctx.arc(lockPos.cx, by, lr * 0.50, Math.PI, 0, false);
+  } else {
+    ctx.arc(lockPos.cx + lr * 0.24, by - lr * 0.14, lr * 0.48, Math.PI, 0.12, false);
+  }
+  ctx.stroke();
+  roundRectPath(ctx, bx, by, bw, bh, 2.5);
+  ctx.fill();
   ctx.restore();
 
+  const sr = live.specialRadial;
   const showMobileSpecialRadial =
-    (live.specialRadial.active && live.specialRadial.source === 'touch') ||
+    (sr.active && sr.source === 'touch') ||
     (editMode && opts?.selectedWidget === 'special');
   if (showMobileSpecialRadial) {
-    const isPreviewOnly = !live.specialRadial.active;
+    const isPreviewOnly = !sr.active;
     const modeSkills = isPreviewOnly
       ? spInfo.skills
-      : getSpecialSkillsForMode(live.specialRadial.modeId);
+      : getSpecialSkillsForMode(sr.modeId);
     const bubbleCount = isPreviewOnly ? Math.max(2, modeSkills.length) : modeSkills.length;
     const s = m.baseScale;
+    const isAimingPhase = !isPreviewOnly && (sr.phase === 'aiming' || sr.phase === 'reselect_armed');
+    const isLockedSingleOrToggle = isLockOn || modeSkills.length <= 1;
 
-    for (let idx = 0; idx < bubbleCount; idx++) {
-      const skillOpt = modeSkills[idx];
-      const pos = getMobileSpecialRadialPos(m.special, s, m.specialRotRad, idx, bubbleCount);
-      const hovered = !isPreviewOnly && live.specialRadial.hoverIdx === idx;
-      const isArmed = skillOpt ? skillOpt.id === spMeta.id : idx === 0;
-      const optColor = skillOpt?.color ?? spMeta.color;
-      const shortLabel = skillOpt ? skillOpt.short : `Chiêu ${idx + 1}`;
+    // Show choice petals in 'selecting' (or edit preview), and faded ghosts in 'aiming' when unlocked
+    if (!isAimingPhase || !isLockedSingleOrToggle) {
+      for (let idx = 0; idx < bubbleCount; idx++) {
+        const skillOpt = modeSkills[idx];
+        const pos = getMobileSpecialRadialPos(m.special, s, m.specialRotRad, idx, bubbleCount);
+        const hovered = !isPreviewOnly && sr.phase === 'selecting' && sr.hoverIdx === idx;
+        const isLockedPetal = isAimingPhase && sr.lockedIdx === idx;
+        if (isLockedPetal) continue; // Replaced by Dynamic Pivot Aim Ring right at this position!
+        const isArmed = skillOpt ? skillOpt.id === spMeta.id : idx === 0;
+        const optColor = skillOpt?.color ?? spMeta.color;
+        const shortLabel = skillOpt ? skillOpt.short : `Chiêu ${idx + 1}`;
+
+        ctx.save();
+        ctx.globalAlpha = isPreviewOnly ? 0.62 : isAimingPhase ? 0.24 : 1;
+
+        if (hovered) {
+          ctx.beginPath();
+          ctx.moveTo(m.special.cx, m.special.cy);
+          ctx.lineTo(pos.x, pos.y);
+          ctx.strokeStyle = optColor;
+          ctx.lineWidth = 2.5;
+          ctx.stroke();
+        }
+
+        const drawR = hovered ? pos.r * 1.16 : pos.r;
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, drawR, 0, Math.PI * 2);
+        ctx.fillStyle = hovered ? optColor : 'rgba(15, 23, 42, 0.92)';
+        ctx.fill();
+        ctx.strokeStyle = hovered ? '#ffffff' : optColor;
+        ctx.lineWidth = hovered ? 2.6 : isArmed ? 2.2 : 1.5;
+        ctx.stroke();
+
+        ctx.fillStyle = hovered ? '#082f49' : '#f8fafc';
+        ctx.font = canvasFont(900, Math.max(10.5, Math.round(12 * s)));
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`${idx + 1}`, pos.x, pos.y - 2 * s);
+
+        ctx.fillStyle = hovered ? '#0f172a' : '#cbd5e1';
+        ctx.font = canvasFont(700, Math.max(7, Math.round(7.5 * s)));
+        ctx.fillText(shortLabel.slice(0, 6), pos.x, pos.y + 8.5 * s);
+        ctx.restore();
+      }
+    }
+
+    // Dynamic Pivot Aim Joystick when locked onto a skill ('aiming' / 'reselect_armed')
+    if (isAimingPhase) {
+      const lockedSkill =
+        (sr.lockedSkillId ? getSpecialSkillById(sr.lockedSkillId) : undefined) ??
+        modeSkills[sr.lockedIdx] ??
+        spMeta;
+      const pivotColor = live.cancelHovered ? '#fb7185' : lockedSkill.color;
+      const aimR = 44 * s;
+      const slotNum = sr.lockedIdx >= 0 ? sr.lockedIdx + 1 : spInfo.index + 1;
 
       ctx.save();
-      ctx.globalAlpha = isPreviewOnly ? 0.62 : 1;
-
-      if (hovered) {
-        ctx.beginPath();
-        ctx.moveTo(m.special.cx, m.special.cy);
-        ctx.lineTo(pos.x, pos.y);
-        ctx.strokeStyle = optColor;
-        ctx.lineWidth = 2.5;
-        ctx.stroke();
-      }
-
-      const drawR = hovered ? pos.r * 1.16 : pos.r;
       ctx.beginPath();
-      ctx.arc(pos.x, pos.y, drawR, 0, Math.PI * 2);
-      ctx.fillStyle = hovered ? optColor : 'rgba(15, 23, 42, 0.92)';
+      ctx.arc(sr.pivotX, sr.pivotY, aimR, 0, Math.PI * 2);
+      ctx.fillStyle = live.cancelHovered ? 'rgba(225, 29, 72, 0.14)' : 'rgba(15, 23, 42, 0.42)';
       ctx.fill();
-      ctx.strokeStyle = hovered ? '#ffffff' : optColor;
-      ctx.lineWidth = hovered ? 2.6 : isArmed ? 2.2 : 1.5;
+      ctx.strokeStyle = pivotColor;
+      ctx.lineWidth = 2.0;
+      ctx.setLineDash([5, 4]);
       ctx.stroke();
+      ctx.setLineDash([]);
 
-      ctx.fillStyle = hovered ? '#082f49' : '#f8fafc';
-      ctx.font = canvasFont(900, Math.max(11, Math.round(13 * s)));
+      // Pivot Center Badge
+      ctx.beginPath();
+      ctx.arc(sr.pivotX, sr.pivotY, 11 * s, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.94)';
+      ctx.fill();
+      ctx.strokeStyle = pivotColor;
+      ctx.lineWidth = 1.8;
+      ctx.stroke();
+      ctx.fillStyle = '#f8fafc';
+      ctx.font = canvasFont(900, Math.max(9, Math.round(10.5 * s)));
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(`${idx + 1}`, pos.x, pos.y - 2 * s);
+      ctx.fillText(`${slotNum}`, sr.pivotX, sr.pivotY + 0.5);
 
-      ctx.fillStyle = hovered ? '#0f172a' : '#cbd5e1';
-      ctx.font = canvasFont(700, Math.max(7.5, Math.round(8 * s)));
-      ctx.fillText(shortLabel.slice(0, 7), pos.x, pos.y + 10 * s);
+      // Vector + Thumb Knob
+      ctx.beginPath();
+      ctx.moveTo(sr.pivotX, sr.pivotY);
+      ctx.lineTo(sr.knobX, sr.knobY);
+      ctx.strokeStyle = pivotColor;
+      ctx.lineWidth = 2.6;
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(sr.knobX, sr.knobY, 14 * s, 0, Math.PI * 2);
+      ctx.fillStyle = pivotColor;
+      ctx.globalAlpha = 0.88;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2.0;
+      ctx.stroke();
       ctx.restore();
     }
 
     if (!isPreviewOnly) {
-      const hoveredSkill =
-        live.specialRadial.hoverIdx !== -1 ? modeSkills[live.specialRadial.hoverIdx] : null;
-      const canInstantCast = player.specialCooldown <= 0 && !player.specialActive;
-      const hintText = hoveredSkill
-        ? canInstantCast
-          ? `Thả: DÙNG NGAY · ${hoveredSkill.name}`
-          : `Thả: ĐỔI MẶC ĐỊNH · ${hoveredSkill.name}`
-        : 'Kéo chọn chiêu · Thả ở nút Ulti để hủy';
-      const hintColor = hoveredSkill ? hoveredSkill.color : '#94a3b8';
+      const canInstantCast = (player.specialCooldown <= 0 && !player.specialActive) || Boolean(player.specialActive);
+      let hintText: string;
+      let hintColor: string;
+      if (sr.phase === 'reselect_armed' && live.cancelHovered) {
+        hintText = !isLockedSingleOrToggle
+          ? 'Thả: HỦY CHIÊU · Kéo ra: CHỌN LẠI CHIÊU'
+          : 'Thả: HỦY CHIÊU';
+        hintColor = '#fb7185';
+      } else if (sr.phase === 'aiming') {
+        const lockedSkill =
+          (sr.lockedSkillId ? getSpecialSkillById(sr.lockedSkillId) : undefined) ??
+          modeSkills[sr.lockedIdx] ??
+          spMeta;
+        hintText = canInstantCast
+          ? `Xoay hướng · Thả: DÙNG ${lockedSkill.name} · Kéo ✕: Hủy/Đổi`
+          : `Đang hồi · Thả: ĐỔI MẶC ĐỊNH ${lockedSkill.name} · Kéo ✕: Hủy`;
+        hintColor = lockedSkill.color;
+      } else {
+        const hoveredSkill = sr.hoverIdx !== -1 ? modeSkills[sr.hoverIdx] : null;
+        hintText = hoveredSkill
+          ? `Chạm ${hoveredSkill.name} để khóa & xoay chiêu`
+          : 'Kéo chạm chiêu để khóa & xoay · Thả ở nút Ulti để hủy';
+        hintColor = hoveredSkill ? hoveredSkill.color : '#94a3b8';
+      }
 
       ctx.save();
-      ctx.font = canvasFont(800, Math.max(9.5, Math.round(10.5 * s)));
+      ctx.font = canvasFont(800, Math.max(9, Math.round(10 * s)));
       const tw = ctx.measureText(hintText).width + 20;
       const hx = clamp(m.special.cx - tw * 0.5, 8, live.vw - tw - 8);
-      const hy = Math.max(m.safeTop + 6, m.special.cy - m.special.r - 92 * s);
+      const hy = Math.max(m.safeTop + 6, m.special.cy - m.special.r - 86 * s);
       roundRectPath(ctx, hx, hy, tw, 24 * s, 99);
       ctx.fillStyle = 'rgba(11, 16, 26, 0.92)';
       ctx.fill();
@@ -529,10 +662,15 @@ export function renderMobileCanvasHUD(
     ctx.restore();
   }
 
-  // 10. AoV Cancel X Zone (shown while aiming an actual attack/dash or in Edit mode)
+  // 10. AoV Cancel X Zone (shown while aiming attack/dash, during Mobile Ulti select/aim, or in Edit mode)
   const isPureDefense =
     isDefenseStance && !isFortressActive && !isHexWallActive;
-  if ((player.isAiming && !isPureDefense) || player.isAimingDash || editMode) {
+  const isTouchSpecialCancelable =
+    live.specialRadial.source === 'touch' &&
+    (live.specialRadial.phase === 'selecting' ||
+      live.specialRadial.phase === 'aiming' ||
+      live.specialRadial.phase === 'reselect_armed');
+  if ((player.isAiming && !isPureDefense) || player.isAimingDash || isTouchSpecialCancelable || editMode) {
     renderCancelZone(ctx, m.cancel.cx, m.cancel.cy, m.cancel.r, live.cancelHovered, m.cancel.opacity);
   }
 

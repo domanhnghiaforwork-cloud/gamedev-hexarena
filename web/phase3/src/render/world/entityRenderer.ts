@@ -2,7 +2,10 @@ import { DEFAULT_COSMETICS, getNeonTheme, type PlayerCosmetics } from '@config/c
 import { canvasFont } from '@config/typography';
 import { AXIAL_DIRS, BASE_HEX_RADIUS, PLAYER_RADIUS } from '@core/constants';
 import { axialKey, axialToLocal, clamp } from '@core/math/hexMath';
+import { segmentIntersectsAnyObstacle } from '@core/world/obstacles';
 import {
+  RANGED_SNIPER_CONE_HALF_ANGLE,
+  RANGED_SNIPER_RANGE,
   computePrismWebClusters,
   getActiveStance,
   getLooseGravityFieldRadius,
@@ -12,8 +15,9 @@ import {
   isHexStolen,
   isLooseGravityFieldActive,
   isLoosePrismWebActive,
+  isRangedSniperActive,
 } from '@core/world/structure';
-import type { Fighter, HexEntity, SummonedWall } from '@core/types';
+import type { Fighter, HexEntity, Obstacle, SummonedWall } from '@core/types';
 import { drawHexPolygon } from './arenaRenderer';
 
 export function renderGravityField(
@@ -179,6 +183,126 @@ export function renderPrismWeb(
 }
 
 
+export function renderSniperStageCone(
+  ctx: CanvasRenderingContext2D,
+  f: Fighter,
+  obstacles: Obstacle[],
+  nowSec: number,
+): void {
+  if (!isRangedSniperActive(f) || !f.specialActive) return;
+  const coneAngle = f.specialActive.coneAngle ?? f.facing;
+  const half = f.specialActive.coneHalfAngle ?? RANGED_SNIPER_CONE_HALF_ANGLE;
+  const range = RANGED_SNIPER_RANGE;
+  const isPlayer = f.id === 'player';
+  const nextShotIsFourth = (f.specialActive.shotsFired ?? 0) + 1 === 4;
+  const mainCol = !isPlayer ? '#fb7185' : nextShotIsFourth ? '#fbbf24' : '#e879f9';
+  const fillCol = !isPlayer
+    ? 'rgba(251, 113, 133, 0.08)'
+    : nextShotIsFourth
+      ? 'rgba(251, 191, 36, 0.11)'
+      : 'rgba(232, 121, 249, 0.09)';
+
+  ctx.save();
+  // Stage sector fill
+  ctx.beginPath();
+  ctx.moveTo(f.x, f.y);
+  ctx.arc(f.x, f.y, range, coneAngle - half, coneAngle + half);
+  ctx.closePath();
+  ctx.fillStyle = fillCol;
+  ctx.fill();
+
+  // Outer range arc & boundary rails
+  ctx.strokeStyle = mainCol;
+  ctx.globalAlpha = 0.52;
+  ctx.lineWidth = 2.0;
+  ctx.beginPath();
+  ctx.moveTo(f.x, f.y);
+  ctx.lineTo(f.x + Math.cos(coneAngle - half) * range, f.y + Math.sin(coneAngle - half) * range);
+  ctx.moveTo(f.x, f.y);
+  ctx.lineTo(f.x + Math.cos(coneAngle + half) * range, f.y + Math.sin(coneAngle + half) * range);
+  ctx.stroke();
+
+  ctx.setLineDash([10, 8]);
+  ctx.lineDashOffset = -nowSec * 36;
+  ctx.beginPath();
+  ctx.arc(f.x, f.y, range, coneAngle - half, coneAngle + half);
+  ctx.stroke();
+
+  // Inner distance calibration rings (350 / 700)
+  ctx.globalAlpha = 0.22;
+  ctx.lineWidth = 1.2;
+  for (const rRing of [350, 700]) {
+    ctx.beginPath();
+    ctx.arc(f.x, f.y, rRing, coneAngle - half, coneAngle + half);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  // Clipped laser sightline along current facing
+  const aimEndX = f.x + Math.cos(f.facing) * range;
+  const aimEndY = f.y + Math.sin(f.facing) * range;
+  const obsHit = segmentIntersectsAnyObstacle(obstacles, f.x, f.y, aimEndX, aimEndY, 4);
+  const sightT = obsHit ? obsHit.t : 1.0;
+  const sightX = f.x + (aimEndX - f.x) * sightT;
+  const sightY = f.y + (aimEndY - f.y) * sightT;
+
+  ctx.globalAlpha = nextShotIsFourth ? 0.92 : 0.72;
+  ctx.strokeStyle = mainCol;
+  ctx.lineWidth = nextShotIsFourth ? 2.6 : 1.8;
+  ctx.beginPath();
+  ctx.moveTo(f.x + Math.cos(f.facing) * (PLAYER_RADIUS + 8), f.y + Math.sin(f.facing) * (PLAYER_RADIUS + 8));
+  ctx.lineTo(sightX, sightY);
+  ctx.stroke();
+
+  if (obsHit) {
+    ctx.beginPath();
+    ctx.arc(sightX, sightY, 4.5, 0, Math.PI * 2);
+    ctx.fillStyle = mainCol;
+    ctx.fill();
+  }
+
+  // Remaining Ammo Pips below shooter (4th shot diamond-highlighted in gold!)
+  if (isPlayer) {
+    const totalAmmo = f.specialActive.totalAmmo ?? f.hexes.length;
+    const shotsFired = f.specialActive.shotsFired ?? 0;
+    const remaining = f.hexes.filter((h) => h.state === 'ASSEMBLED').length;
+    const pipGap = 11;
+    const startX = f.x - ((totalAmmo - 1) * pipGap) * 0.5;
+    const pipY = f.y + PLAYER_RADIUS + 18;
+    ctx.globalAlpha = 0.95;
+    for (let i = 0; i < totalAmmo; i++) {
+      const px = startX + i * pipGap;
+      const spent = i < shotsFired || i >= shotsFired + remaining;
+      const isFourthPip = i === 3;
+      const isCurrent = i === shotsFired;
+      ctx.beginPath();
+      if (isFourthPip) {
+        const s = isCurrent ? 5.8 : 4.6;
+        ctx.moveTo(px, pipY - s);
+        ctx.lineTo(px + s, pipY);
+        ctx.lineTo(px, pipY + s);
+        ctx.lineTo(px - s, pipY);
+        ctx.closePath();
+      } else {
+        ctx.arc(px, pipY, isCurrent ? 4.2 : 3.2, 0, Math.PI * 2);
+      }
+      ctx.fillStyle = spent
+        ? 'rgba(148, 163, 184, 0.25)'
+        : isFourthPip
+          ? '#fbbf24'
+          : '#e879f9';
+      ctx.fill();
+      if (!spent && isCurrent) {
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.4;
+        ctx.stroke();
+      }
+    }
+  }
+  ctx.restore();
+}
+
+
 export function renderFighterBody(
   ctx: CanvasRenderingContext2D,
   f: Fighter,
@@ -281,6 +405,15 @@ export function renderFighterBody(
         ctx.stroke();
       }
       ctx.restore();
+    } else if (isRangedSniperActive(f)) {
+      const nextFourth = (sp.shotsFired ?? 0) + 1 === 4;
+      ctx.save();
+      ctx.strokeStyle = nextFourth ? 'rgba(251, 191, 36, 0.85)' : 'rgba(232, 121, 249, 0.78)';
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      ctx.arc(f.x, f.y, PLAYER_RADIUS + 10, f.facing - 0.55, f.facing + 0.55);
+      ctx.stroke();
+      ctx.restore();
     } else if (sp.type === 'ranged') {
       // Violet plasma halo ring
       ctx.save();
@@ -351,15 +484,19 @@ export function renderFighterBody(
   ctx.ellipse(f.x + 2, f.y + 7, 15.5, 9.5, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Elevated Glowing Sphere Core
-  const sphereY = f.y - 6;
-  const grad = ctx.createRadialGradient(f.x - 5, sphereY - 6, 2, f.x, sphereY, 19);
+  // Elevated Glowing Sphere Core (with tactile backward kick on sniper shots)
+  const recoilFrac = f.recoilTimer > 0 ? clamp(f.recoilTimer / 0.24, 0, 1) : 0;
+  const recoilOff = f.recoilAmp * recoilFrac;
+  const rx = f.x - Math.cos(f.recoilAngle) * recoilOff;
+  const ry = f.y - Math.sin(f.recoilAngle) * recoilOff;
+  const sphereY = ry - 6;
+  const grad = ctx.createRadialGradient(rx - 5, sphereY - 6, 2, rx, sphereY, 19);
   grad.addColorStop(0, '#ffffff');
   grad.addColorStop(0.35, f.damageFlash > 0 ? '#ffffff' : lightColor);
   grad.addColorStop(1, mainColor);
   ctx.fillStyle = grad;
   ctx.beginPath();
-  ctx.arc(f.x, sphereY, 17, 0, Math.PI * 2);
+  ctx.arc(rx, sphereY, 17, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.restore();
@@ -675,29 +812,42 @@ export function renderFighterHexLayer(
   }
 
   for (const h of f.hexes) {
-    if (h.state === 'BROKEN') continue;
+    if (h.state === 'BROKEN' || h.state === 'SNIPER_SPENT') continue;
     const isHigh = h.altitude > 0.35;
     if (isHigh !== highFlightOnly) continue;
 
-    // Smooth Two-Pass Luminous Motion Trail
+    // Smooth Two-Pass Luminous Motion Trail (Sniper shots get blazing golden/violet tracer ribbon!)
     if (h.trail.length > 1) {
       ctx.save();
-      const trailColor =
-        isHexStolen(h) ? '#fbbf24' : h.state === 'RECALLING' ? '#fbbf24' : baseColor;
+      const isSniperShot = h.state === 'SNIPER_SHOT';
+      const isSniperFourth = isSniperShot && Boolean(h.sniperEmpowered);
+      const trailColor = isSniperFourth
+        ? '#fbbf24'
+        : isSniperShot
+          ? isPlayer
+            ? '#e879f9'
+            : '#fb7185'
+          : h.state === 'SNIPER_RETURN'
+            ? '#c084fc'
+            : isHexStolen(h)
+              ? '#fbbf24'
+              : h.state === 'RECALLING'
+                ? '#fbbf24'
+                : baseColor;
       ctx.lineCap = 'round';
       for (let i = 1; i < h.trail.length; i++) {
         const frac = i / h.trail.length;
         ctx.strokeStyle = trailColor;
-        ctx.globalAlpha = frac * 0.34;
-        ctx.lineWidth = R * 0.85 * frac;
+        ctx.globalAlpha = frac * (isSniperFourth ? 0.68 : isSniperShot ? 0.52 : 0.34);
+        ctx.lineWidth = R * (isSniperFourth ? 1.35 : isSniperShot ? 1.05 : 0.85) * frac;
         ctx.beginPath();
         ctx.moveTo(h.trail[i - 1].x, h.trail[i - 1].y - h.altitude * 18);
         ctx.lineTo(h.trail[i].x, h.trail[i].y - h.altitude * 18);
         ctx.stroke();
 
-        ctx.strokeStyle = '#ffffff';
-        ctx.globalAlpha = frac * 0.24;
-        ctx.lineWidth = R * 0.24 * frac;
+        ctx.strokeStyle = isSniperFourth ? '#fef08a' : '#ffffff';
+        ctx.globalAlpha = frac * (isSniperShot ? 0.55 : 0.24);
+        ctx.lineWidth = R * (isSniperShot ? 0.42 : 0.24) * frac;
         ctx.stroke();
       }
       ctx.restore();
@@ -737,6 +887,16 @@ export function renderFighterHexLayer(
       const thiefIsPlayer = h.stolenById === 'player';
       strokeColor = thiefIsPlayer ? baseColor : '#fb7185';
       fillColor = 'rgba(245, 158, 11, 0.36)';
+    } else if (h.state === 'SNIPER_SHOT') {
+      strokeColor = h.sniperEmpowered ? '#fbbf24' : isPlayer ? '#e879f9' : '#fb7185';
+      fillColor = h.sniperEmpowered
+        ? 'rgba(251, 191, 36, 0.45)'
+        : isPlayer
+          ? 'rgba(232, 121, 249, 0.42)'
+          : 'rgba(251, 113, 133, 0.42)';
+    } else if (h.state === 'SNIPER_RETURN') {
+      strokeColor = isPlayer ? '#c084fc' : '#fb7185';
+      fillColor = 'rgba(192, 132, 252, 0.28)';
     } else if (h.state === 'PLANTED' || h.state === 'RECALLING') {
       strokeColor = '#fbbf24';
       fillColor = 'rgba(245, 158, 11, 0.28)';

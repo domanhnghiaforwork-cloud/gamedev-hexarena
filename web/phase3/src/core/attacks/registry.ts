@@ -1,5 +1,6 @@
 import { PLAYER_RADIUS } from '../constants';
-import { getActiveBlueprint, getActiveStance } from '../world/structure';
+import { clamp } from '../math/hexMath';
+import { getActiveBlueprint, getActiveStance, isDefenseFortressActive } from '../world/structure';
 import type {
   AttackModeId,
   CombatStance,
@@ -187,11 +188,18 @@ export function triggerFighterSpecial(
   fighter: Fighter,
   applyHexDurabilityLossFn?: ApplyHexDurabilityLossFn,
   overrideSkillId?: SpecialSkillId,
+  aimOpts?: { angle?: number; strength?: number },
 ): boolean {
   if (state.matchOver) return false;
 
   const opp = fighter.id === 'player' ? state.enemy : state.player;
   const activeModeId = getFighterAttackModeId(fighter);
+  const hasAngle = typeof aimOpts?.angle === 'number' && Number.isFinite(aimOpts.angle);
+  const aimAngle = hasAngle ? aimOpts!.angle! : fighter.facing;
+  const aimStrength =
+    typeof aimOpts?.strength === 'number' && Number.isFinite(aimOpts.strength)
+      ? clamp(aimOpts.strength, 0, 1)
+      : 1.0;
 
   if (overrideSkillId) {
     const override = specialSkillMap.get(overrideSkillId);
@@ -207,11 +215,16 @@ export function triggerFighterSpecial(
       (fighter.specialActive.skillId ? specialSkillMap.get(fighter.specialActive.skillId) : undefined) ??
       getDefaultSpecialSkillForMode(fighter.specialActive.type);
     if (activeSkill.onReactivate) {
+      if (hasAngle && !isDefenseFortressActive(fighter)) {
+        fighter.facing = aimAngle;
+      }
       const handled = activeSkill.onReactivate({
         state,
         fighter,
         opponent: opp,
         applyHexDurabilityLoss: applyHexDurabilityLossFn,
+        aimAngle,
+        aimStrength,
       });
       if (handled) return true;
     }
@@ -225,11 +238,16 @@ export function triggerFighterSpecial(
   }
 
   const skill = resolveFighterSpecialSkill(fighter);
+  if (hasAngle && !isDefenseFortressActive(fighter)) {
+    fighter.facing = aimAngle;
+  }
   const activated = skill.activate({
     state,
     fighter,
     opponent: opp,
     applyHexDurabilityLoss: applyHexDurabilityLossFn,
+    aimAngle,
+    aimStrength,
   });
 
   if (!activated) {
@@ -308,6 +326,9 @@ function toSkillMeta(key: SpecialSkillKey, skill: SpecialSkillDefinition): Speci
     ...(skill.disarmDur !== undefined ? { disarmDur: skill.disarmDur } : {}),
     color: skill.color,
     desc: skill.desc,
+    ...(skill.targeting !== undefined ? { targeting: skill.targeting } : {}),
+    ...(skill.aimRange !== undefined ? { aimRange: skill.aimRange } : {}),
+    ...(skill.aimRadius !== undefined ? { aimRadius: skill.aimRadius } : {}),
   };
 }
 

@@ -6,6 +6,7 @@ import {
   getEnemyLooseSlowFactor,
   isDefenseFortressActive,
   isHexStolen,
+  isRangedSniperActive,
 } from '@core/world/structure';
 import type { Fighter, HexEntity, MatchState, Obstacle, SummonedWall } from '@core/types';
 import {
@@ -90,8 +91,10 @@ export class PvPInterpolator {
     }
 
     const bodySlowMult = getEnemyLooseSlowFactor(state.enemy, this.predX, this.predY, PLAYER_RADIUS * 0.5);
-    const moveMult =
-      (isDefenseFortressActive(p) ? 0.60 : 1.0) * bodySlowMult;
+    const hitSlowMult = p.slowTimer > 0 ? p.slowFactor : 1.0;
+    const moveMult = isRangedSniperActive(p)
+      ? 0
+      : (isDefenseFortressActive(p) ? 0.60 : 1.0) * bodySlowMult * hitSlowMult;
     this.pendingMoves.push({ seq, dt, mx, my, moveMult });
     if (this.pendingMoves.length > 90) {
       this.pendingMoves.shift();
@@ -366,6 +369,11 @@ export class PvPInterpolator {
     target.hp = latest.hp;
     target.maxHp = latest.maxHp;
     target.damageFlash = latest.damageFlash;
+    target.slowTimer = latest.slowTimer ?? 0;
+    target.slowFactor = latest.slowFactor ?? 1.0;
+    target.recoilTimer = latest.recoilTimer ?? 0;
+    target.recoilAngle = latest.recoilAngle ?? target.facing;
+    target.recoilAmp = latest.recoilAmp ?? 0;
     target.form = latest.form;
     target.rootHexId = latest.rootHexId;
     target.targetScale = latest.targetScale;
@@ -458,6 +466,7 @@ export class PvPInterpolator {
       th.role = hl.role;
       th.stolenById = hl.stolenById;
       th.stolenTimer = hl.stolenTimer;
+      th.sniperEmpowered = Boolean(hl.sniperEmpowered);
 
       // Local smooth trail generation (zero network overhead!)
       const wantsTrail =
@@ -465,13 +474,22 @@ export class PvPInterpolator {
         th.state === 'RECALLING' ||
         th.state === 'STOLEN_FLY' ||
         th.state === 'STOLEN_RETURN' ||
+        th.state === 'SNIPER_SHOT' ||
+        th.state === 'SNIPER_RETURN' ||
         (th.state === 'ASSEMBLED' && latest.isAttacking && (th.role === 'tip' || th.role === 'front' || th.role === 'spine'));
 
-      if (wantsTrail && !hexJump && !isHexStolen(th) || th.state === 'STOLEN_FLY' || th.state === 'STOLEN_RETURN') {
+      if (
+        (wantsTrail && !hexJump && !isHexStolen(th)) ||
+        th.state === 'STOLEN_FLY' ||
+        th.state === 'STOLEN_RETURN' ||
+        th.state === 'SNIPER_SHOT' ||
+        th.state === 'SNIPER_RETURN'
+      ) {
         const lastPt = th.trail[th.trail.length - 1];
         if (!lastPt || Math.hypot(th.x - lastPt.x, th.y - lastPt.y) > 4) {
           th.trail.push({ x: th.x, y: th.y });
-          if (th.trail.length > 9) th.trail.shift();
+          const maxLen = th.state === 'SNIPER_SHOT' ? 16 : th.state === 'SNIPER_RETURN' ? 12 : 9;
+          if (th.trail.length > maxLen) th.trail.shift();
         }
       } else if (th.trail.length > 0) {
         th.trail.shift();

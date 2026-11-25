@@ -1,4 +1,5 @@
 import {
+  ARENA_RADIUS,
   BASE_HEX_RADIUS,
   HEX_REGEN_RATE,
   MATCH_DURATION,
@@ -19,10 +20,16 @@ import {
 } from '../world/obstacles';
 import { setFighterForm } from '../attacks/common';
 import { launchHex } from '../attacks/loose/attack';
+import {
+  SNIPER_RETURN_SPEED,
+  launchHexSniperReturn,
+  spendSniperHex,
+} from '../attacks/ranged/specials/sniperStage';
 import { updateActiveSpecialSkill } from '../attacks/registry';
 import {
   LOOSE_GRAVITY_SLOW_FACTOR,
   applyBlueprintFormation,
+  clampAngleToSniperCone,
   createFighter,
   getActiveAnchorDist,
   getActiveStance,
@@ -32,6 +39,7 @@ import {
   isDefenseFortressActive,
   isInsideLooseGravityField,
   isLooseGravityFieldActive,
+  isRangedSniperActive,
   isSlotKey,
 } from '../world/structure';
 import type { Fighter, GuidedSteerInput, MatchState, PlayerLoadout } from '../types';
@@ -125,6 +133,11 @@ export function updateFighter(
   if (fighter.dashCooldown > 0) fighter.dashCooldown = Math.max(0, fighter.dashCooldown - dt);
   if (fighter.specialCooldown > 0) fighter.specialCooldown = Math.max(0, fighter.specialCooldown - dt);
   if (fighter.damageFlash > 0) fighter.damageFlash = Math.max(0, fighter.damageFlash - dt);
+  if (fighter.slowTimer > 0) {
+    fighter.slowTimer = Math.max(0, fighter.slowTimer - dt);
+    if (fighter.slowTimer === 0) fighter.slowFactor = 1.0;
+  }
+  if (fighter.recoilTimer > 0) fighter.recoilTimer = Math.max(0, fighter.recoilTimer - dt);
   if (fighter.pingTimer > 0) {
     fighter.pingTimer = Math.max(0, fighter.pingTimer - dt);
     if (fighter.pingTimer === 0) fighter.pingHexId = -1;
@@ -152,13 +165,20 @@ export function updateFighter(
     }
   }
 
-  // Movement & Dash (Defense Fortress -40%; Opponent Gravity -80% or Prism Web -40%)
+  // Movement & Dash (Sniper Stage rooted 0x; Defense Fortress -40%; Hit-Slow; Gravity/Prism)
   const bodySlowMult = getEnemyLooseSlowFactor(opponent, fighter.x, fighter.y, PLAYER_RADIUS * 0.5);
-  const moveMult = (isDefenseFortressActive(fighter) ? 0.60 : 1.0) * bodySlowMult;
-  if (fighter.dashTimer > 0) {
+  const hitSlowMult = fighter.slowTimer > 0 ? fighter.slowFactor : 1.0;
+  const sniperRooted = isRangedSniperActive(fighter);
+  if (sniperRooted) {
+    fighter.facing = clampAngleToSniperCone(fighter, fighter.facing);
+  }
+  const moveMult = sniperRooted
+    ? 0
+    : (isDefenseFortressActive(fighter) ? 0.60 : 1.0) * bodySlowMult * hitSlowMult;
+  if (fighter.dashTimer > 0 && !sniperRooted) {
     fighter.dashTimer = Math.max(0, fighter.dashTimer - dt);
-    fighter.x += fighter.dashVx * bodySlowMult * dt;
-    fighter.y += fighter.dashVy * bodySlowMult * dt;
+    fighter.x += fighter.dashVx * bodySlowMult * hitSlowMult * dt;
+    fighter.y += fighter.dashVy * bodySlowMult * hitSlowMult * dt;
     if (Math.random() < 0.65) {
       fighter.dashAfterimages.push({ x: fighter.x, y: fighter.y, life: 0.22, maxLife: 0.22 });
     }
@@ -810,6 +830,72 @@ export function updateFighter(
         h.y += (dy / d) * recallSpeed * recallSlow * dt;
         h.trail.push({ x: h.x, y: h.y });
         if (h.trail.length > 12) h.trail.shift();
+      }
+    } else if (h.state === 'SNIPER_SHOT') {
+      const prevX = h.x;
+      const prevY = h.y;
+      const shotSlow = isInsideLooseGravityField(opponent, h.x, h.y, R * 0.85) ? LOOSE_GRAVITY_SLOW_FACTOR : 1.0;
+      const stepX = h.vx * shotSlow * dt;
+      const stepY = h.vy * shotSlow * dt;
+      h.x += stepX;
+      h.y += stepY;
+      h.remainingDist -= Math.hypot(stepX, stepY);
+      h.trail.push({ x: h.x, y: h.y });
+      if (h.trail.length > 16) h.trail.shift();
+
+      let blockedByObs = false;
+      const segHit = segmentIntersectsAnyObstacle(state.obstacles, prevX, prevY, h.x, h.y, R * 0.50);
+      if (segHit) {
+        h.x = lerp(prevX, h.x, segHit.t);
+        h.y = lerp(prevY, h.y, segHit.t);
+        blockedByObs = true;
+      } else if (isCircleBlockedByObstacle(state.obstacles, h.x, h.y, R * 0.55)) {
+        blockedByObs = true;
+      }
+
+      if (blockedByObs) {
+        state.events.push({
+          type: 'sparks',
+          x: h.x,
+          y: h.y,
+          color: h.sniperEmpowered ? '#fbbf24' : '#e879f9',
+          count: h.sniperEmpowered ? 12 : 7,
+          speed: 240,
+          size: 3.0,
+        });
+        state.events.push({ type: 'sfx', kind: 'bounce' });
+        spendSniperHex(fighter, h);
+      } else if (Math.hypot(h.x, h.y) > ARENA_RADIUS + 42 || h.remainingDist <= 0) {
+        spendSniperHex(fighter, h);
+      }
+    } else if (h.state === 'SNIPER_SPENT') {
+      if (!isRangedSniperActive(fighter)) {
+        launchHexSniperReturn(h, h.id, Math.max(1, fighter.hexes.length), fighter.facing);
+      }
+    } else if (h.state === 'SNIPER_RETURN') {
+      h.altitude = lerp(h.altitude, 1.0, Math.min(1, dt * 14));
+      const dx = fighter.x - h.x;
+      const dy = fighter.y - h.y;
+      const d = Math.hypot(dx, dy);
+      if (d < PLAYER_RADIUS + 30) {
+        h.altitude = 0;
+        h.trail.length = 0;
+        h.sniperEmpowered = false;
+        if (fighter.form === 'loose') {
+          h.state = 'ORBIT';
+          h.selected = true;
+          state.events.push({ type: 'sfx', kind: 'snap' });
+        } else {
+          insertRecoveredHexIntoCluster(fighter, h, state.events);
+        }
+      } else {
+        const retSlow = isInsideLooseGravityField(opponent, h.x, h.y, R * 0.85) ? LOOSE_GRAVITY_SLOW_FACTOR : 1.0;
+        const step = Math.min(d, SNIPER_RETURN_SPEED * retSlow * dt);
+        h.x += (dx / d) * step;
+        h.y += (dy / d) * step;
+        h.spinAngle += dt * 10;
+        h.trail.push({ x: h.x, y: h.y });
+        if (h.trail.length > 14) h.trail.shift();
       }
     } else if (h.state === 'ASSEMBLED') {
       if (h.morphTimer > 0) {
