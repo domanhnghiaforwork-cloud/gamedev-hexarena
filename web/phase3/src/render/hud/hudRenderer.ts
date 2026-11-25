@@ -1,0 +1,664 @@
+import { canvasFont } from '@config/typography';
+import { DASH_COOLDOWN } from '@core/constants';
+import { clamp } from '@core/math/hexMath';
+import { getFighterSpecialKey, SPECIAL_SKILLS, STANCE_META } from '@attacks/index';
+import { getActiveBlueprint, isSlotKey } from '@core/world/structure';
+import type { Fighter, FormKey } from '@core/types';
+import type { LiveInputState } from '@input/inputManager';
+import { getRotateHandlePos } from '@input/hudPresets';
+import {
+  formatKeyLabel,
+  MOBILE_WIDGET_LABELS,
+  type MobileWidgetId,
+  type PCControlConfig,
+} from '@storage/profiles';
+
+function roundRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
+  const rad = Math.min(r, w * 0.5, h * 0.5);
+  ctx.beginPath();
+  ctx.moveTo(x + rad, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rad);
+  ctx.arcTo(x + w, y + h, x, y + h, rad);
+  ctx.arcTo(x, y + h, x, y, rad);
+  ctx.arcTo(x, y, x + w, y, rad);
+  ctx.closePath();
+}
+
+function getFormDisplay(player: Fighter, id: FormKey): { label: string; color: string } {
+  if (id === 'loose') return { label: 'Đơn lẻ', color: '#38bdf8' };
+  const bp = player.loadout.blueprints[id];
+  return {
+    label: bp.name.slice(0, 9),
+    color: STANCE_META[bp.stance].color,
+  };
+}
+
+function renderCancelZone(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  r: number,
+  hovered: boolean,
+  opacity: number,
+): void {
+  ctx.save();
+  ctx.globalAlpha = opacity;
+  const drawR = hovered ? r * 1.18 : r;
+  ctx.beginPath();
+  ctx.arc(cx, cy, drawR, 0, Math.PI * 2);
+  ctx.fillStyle = hovered ? 'rgba(225, 29, 72, 0.85)' : 'rgba(15, 23, 42, 0.80)';
+  ctx.fill();
+  ctx.strokeStyle = hovered ? '#fecdd3' : '#fb7185';
+  ctx.lineWidth = hovered ? 3 : 2;
+  ctx.stroke();
+
+  ctx.fillStyle = '#ffffff';
+  ctx.font = canvasFont(800, Math.round(drawR * 0.52));
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('✕', cx, cy - 3);
+  ctx.font = canvasFont(700, Math.round(drawR * 0.28));
+  ctx.fillText('HỦY', cx, cy + drawR * 0.44);
+  ctx.restore();
+}
+
+export function renderMobileCanvasHUD(
+  ctx: CanvasRenderingContext2D,
+  player: Fighter,
+  live: LiveInputState,
+  opts?: {
+    editMode?: boolean;
+    selectedWidget?: MobileWidgetId | null;
+    snapGrid?: boolean;
+  },
+): void {
+  const m = live.mobileLayout;
+  const editMode = !!opts?.editMode;
+  const isLoose = player.form === 'loose' || editMode;
+
+  // Optional Snap Grid lines in Mobile HUD Edit Mode
+  if (editMode && opts?.snapGrid) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.14)';
+    ctx.lineWidth = 1;
+    const stepX = (live.vw - m.safeLeft - m.safeRight) / 20;
+    const stepY = (live.vh - m.safeTop - m.safeBottom) / 16;
+    for (let i = 0; i <= 20; i++) {
+      const gx = m.safeLeft + i * stepX;
+      ctx.beginPath();
+      ctx.moveTo(gx, m.safeTop);
+      ctx.lineTo(gx, live.vh - m.safeBottom);
+      ctx.stroke();
+    }
+    for (let j = 0; j <= 16; j++) {
+      const gy = m.safeTop + j * stepY;
+      ctx.beginPath();
+      ctx.moveTo(m.safeLeft, gy);
+      ctx.lineTo(live.vw - m.safeRight, gy);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // 1. Joystick
+  ctx.save();
+  ctx.globalAlpha = m.joy.opacity;
+  ctx.beginPath();
+  ctx.arc(m.joy.cx, m.joy.cy, m.joy.r, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.56)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(148, 163, 184, 0.45)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(live.joy.knobX, live.joy.knobY, m.joy.r * 0.44, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(56, 189, 248, 0.72)';
+  ctx.fill();
+  ctx.strokeStyle = '#e0f2fe';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.restore();
+
+  // 2. Curved Dynamic N-Hex Arc-Selector (5..10 hexes, Loose mode or Edit preview)
+  if (isLoose) {
+    const arc = m.arc;
+    const segAng = (arc.endAng - arc.startAng) / arc.hexCount;
+    ctx.save();
+    ctx.globalAlpha = arc.opacity;
+    for (let i = 0; i < arc.hexCount; i++) {
+      const hex = player.hexes[i];
+      if (!hex) continue;
+      const a0 = arc.startAng + i * segAng + 0.015;
+      const a1 = arc.startAng + (i + 1) * segAng - 0.015;
+      const midA = (a0 + a1) * 0.5;
+      const midR = (arc.innerR + arc.outerR) * 0.5;
+
+      ctx.beginPath();
+      ctx.arc(arc.cx, arc.cy, arc.outerR, a0, a1);
+      ctx.arc(arc.cx, arc.cy, arc.innerR, a1, a0, true);
+      ctx.closePath();
+
+      let fill = 'rgba(20, 28, 42, 0.74)';
+      let stroke = 'rgba(148, 163, 184, 0.40)';
+      if (hex.state === 'BROKEN') {
+        fill = 'rgba(159, 18, 57, 0.55)';
+        stroke = '#fb7185';
+      } else if (hex.state === 'PLANTED' || hex.state === 'LAUNCHED') {
+        fill = hex.selected ? 'rgba(245, 158, 11, 0.65)' : 'rgba(180, 83, 9, 0.48)';
+        stroke = hex.selected ? '#ffffff' : '#fbbf24';
+      } else if (hex.selected) {
+        fill = 'rgba(14, 165, 233, 0.58)';
+        stroke = '#ffffff';
+      }
+      ctx.fillStyle = fill;
+      ctx.fill();
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = hex.selected ? 2.2 : 1.3;
+      ctx.stroke();
+
+      const tx = arc.cx + Math.cos(midA) * midR;
+      const ty = arc.cy + Math.sin(midA) * midR;
+      ctx.fillStyle = '#f8fafc';
+      ctx.font = canvasFont(800, Math.max(9, Math.round(11 * m.baseScale)));
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(hex.state === 'BROKEN' ? `${Math.ceil(hex.cooldown)}` : `${i + 1}`, tx, ty);
+    }
+    ctx.restore();
+  }
+
+  // 3. Main Attack / Shield-Aim Pad
+  const bp = getActiveBlueprint(player);
+  const isDefenseStance = bp?.stance === 'defense';
+  const isFortressActive = isDefenseStance && player.specialActive?.type === 'defense';
+  const atkLabel = isFortressActive ? 'XUNG' : bp ? STANCE_META[bp.stance].attackLabel : 'PHÓNG';
+  ctx.save();
+  ctx.globalAlpha = m.atk.opacity;
+  ctx.beginPath();
+  ctx.arc(m.atk.cx, m.atk.cy, m.atk.r, 0, Math.PI * 2);
+  ctx.fillStyle = isFortressActive
+    ? 'rgba(16, 185, 129, 0.42)'
+    : isDefenseStance
+      ? 'rgba(15, 23, 42, 0.66)'
+      : 'rgba(14, 116, 144, 0.42)';
+  ctx.fill();
+  ctx.strokeStyle = isFortressActive
+    ? '#34d399'
+    : isDefenseStance
+      ? 'rgba(52, 211, 153, 0.55)'
+      : '#38bdf8';
+  ctx.lineWidth = isFortressActive ? 3.0 : 2.4;
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(live.atk.knobX, live.atk.knobY, m.atk.r * 0.58, 0, Math.PI * 2);
+  ctx.fillStyle = isFortressActive
+    ? 'rgba(52, 211, 153, 0.90)'
+    : isDefenseStance
+      ? 'rgba(16, 185, 129, 0.45)'
+      : 'rgba(56, 189, 248, 0.85)';
+  ctx.fill();
+  ctx.fillStyle = isDefenseStance && !isFortressActive ? '#d1fae5' : '#082f49';
+  ctx.font = canvasFont(900, Math.max(10, Math.round(12 * m.baseScale)));
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(atkLabel, live.atk.knobX, live.atk.knobY);
+  ctx.restore();
+
+  // 4. Dash Button
+  ctx.save();
+  ctx.globalAlpha = m.dash.opacity;
+  ctx.beginPath();
+  ctx.arc(m.dash.cx, m.dash.cy, m.dash.r, 0, Math.PI * 2);
+  ctx.fillStyle = player.dashCooldown > 0 ? 'rgba(15, 23, 42, 0.8)' : 'rgba(16, 185, 129, 0.34)';
+  ctx.fill();
+  ctx.strokeStyle = player.dashCooldown > 0 ? 'rgba(148, 163, 184, 0.4)' : '#34d399';
+  ctx.lineWidth = 2.2;
+  ctx.stroke();
+  if (player.dashCooldown > 0) {
+    const frac = clamp(player.dashCooldown / DASH_COOLDOWN, 0, 1);
+    ctx.beginPath();
+    ctx.moveTo(m.dash.cx, m.dash.cy);
+    ctx.arc(m.dash.cx, m.dash.cy, m.dash.r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.65)';
+    ctx.fill();
+  }
+  ctx.fillStyle = '#f8fafc';
+  ctx.font = canvasFont(800, Math.max(9, Math.round(10 * m.baseScale)));
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(player.dashCooldown > 0 ? player.dashCooldown.toFixed(1) : 'LƯỚT', m.dash.cx, m.dash.cy);
+  ctx.restore();
+
+  // 5. Form Switch Button + Radial Menu
+  const formInfo = getFormDisplay(player, player.form);
+  ctx.save();
+  ctx.globalAlpha = m.form.opacity;
+  ctx.beginPath();
+  ctx.arc(m.form.cx, m.form.cy, m.form.r, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(20, 28, 42, 0.82)';
+  ctx.fill();
+  ctx.strokeStyle = formInfo.color;
+  ctx.lineWidth = 2.2;
+  ctx.stroke();
+  ctx.fillStyle = '#f8fafc';
+  ctx.font = canvasFont(800, Math.max(8, Math.round(9.5 * m.baseScale)));
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(formInfo.label.slice(0, 7), m.form.cx, m.form.cy);
+  ctx.restore();
+
+  const showFormRadial = live.formRadial.pointerId !== null || (editMode && opts?.selectedWidget === 'form');
+  if (showFormRadial) {
+    const isPreviewOnly = live.formRadial.pointerId === null;
+    live.formRadial.options.forEach((opt, idx) => {
+      const fOpt = getFormDisplay(player, opt.id);
+      const s = m.baseScale;
+      const optAng = opt.angle + m.formRotRad;
+      const px = m.form.cx + Math.cos(optAng) * 82 * s;
+      const py = m.form.cy + Math.sin(optAng) * 82 * s;
+      const r = 24 * s;
+      const hovered = !isPreviewOnly && live.formRadial.hoverIdx === idx;
+      ctx.save();
+      ctx.globalAlpha = isPreviewOnly ? 0.55 : 1;
+      ctx.beginPath();
+      ctx.arc(px, py, hovered ? r * 1.15 : r, 0, Math.PI * 2);
+      ctx.fillStyle = hovered ? fOpt.color : 'rgba(15, 23, 42, 0.90)';
+      ctx.fill();
+      ctx.strokeStyle = hovered ? '#ffffff' : fOpt.color;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = hovered ? '#0f172a' : '#f8fafc';
+      ctx.font = canvasFont(800, Math.max(8, Math.round(9 * s)));
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(fOpt.label.slice(0, 8), px, py);
+      ctx.restore();
+    });
+  }
+
+  // 6. Special Skill Button (Ulti)
+  const spKey = getFighterSpecialKey(player);
+  const spMeta = SPECIAL_SKILLS[spKey];
+  ctx.save();
+  ctx.globalAlpha = m.special.opacity;
+  ctx.beginPath();
+  ctx.arc(m.special.cx, m.special.cy, m.special.r, 0, Math.PI * 2);
+  ctx.fillStyle = player.specialActive
+    ? 'rgba(192, 132, 252, 0.42)'
+    : player.specialCooldown > 0
+      ? 'rgba(15, 23, 42, 0.82)'
+      : 'rgba(30, 41, 59, 0.86)';
+  ctx.fill();
+  ctx.strokeStyle = player.specialCooldown > 0 && !player.specialActive ? 'rgba(148, 163, 184, 0.42)' : spMeta.color;
+  ctx.lineWidth = player.specialActive ? 3 : 2.2;
+  ctx.stroke();
+  ctx.fillStyle = '#f8fafc';
+  ctx.font = canvasFont(800, Math.max(9, Math.round(10 * m.baseScale)));
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const spText = player.specialActive
+    ? `${player.specialActive.timer.toFixed(1)}s`
+    : player.specialCooldown > 0
+      ? `${Math.ceil(player.specialCooldown)}s`
+      : 'Ulti';
+  ctx.fillText(spText, m.special.cx, m.special.cy);
+  ctx.restore();
+
+  // 7. Recall & Select All + Fire Tabs (Loose or Edit mode)
+  if (isLoose) {
+    const selectedPlantedCount = player.hexes.filter(
+      (h) => (h.state === 'PLANTED' || h.state === 'LAUNCHED') && h.selected,
+    ).length;
+
+    // Select All
+    ctx.save();
+    ctx.globalAlpha = m.btnAll.opacity;
+    roundRectPath(ctx, m.btnAll.x, m.btnAll.y, m.btnAll.w, m.btnAll.h, 8);
+    ctx.fillStyle = 'rgba(20, 28, 42, 0.82)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.55)';
+    ctx.lineWidth = 1.6;
+    ctx.stroke();
+    ctx.fillStyle = '#e0f2fe';
+    ctx.font = canvasFont(700, Math.max(9, Math.round(10 * m.baseScale)));
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Chọn hết', m.btnAll.x + m.btnAll.w * 0.5, m.btnAll.y + m.btnAll.h * 0.5);
+    ctx.restore();
+
+    // Smart Recall
+    ctx.save();
+    ctx.globalAlpha = m.btnRecall.opacity;
+    roundRectPath(ctx, m.btnRecall.x, m.btnRecall.y, m.btnRecall.w, m.btnRecall.h, 8);
+    ctx.fillStyle = selectedPlantedCount > 0 ? 'rgba(245, 158, 11, 0.36)' : 'rgba(20, 28, 42, 0.82)';
+    ctx.fill();
+    ctx.strokeStyle = selectedPlantedCount > 0 ? '#ffffff' : '#fbbf24';
+    ctx.lineWidth = 1.8;
+    ctx.stroke();
+    ctx.fillStyle = '#fef3c7';
+    ctx.font = canvasFont(800, Math.max(9, Math.round(10 * m.baseScale)));
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(
+      selectedPlantedCount > 0 ? `Thu (${selectedPlantedCount})` : 'Thu hồi',
+      m.btnRecall.x + m.btnRecall.w * 0.5,
+      m.btnRecall.y + m.btnRecall.h * 0.5,
+    );
+    ctx.restore();
+
+    // 3 Fire Mode Tabs
+    for (const tab of m.fireTabs) {
+      const active = player.fireMode === tab.id;
+      ctx.save();
+      ctx.globalAlpha = tab.opacity;
+      roundRectPath(ctx, tab.x, tab.y, tab.w, tab.h, 7);
+      ctx.fillStyle = active ? 'rgba(56, 189, 248, 0.34)' : 'rgba(20, 28, 42, 0.78)';
+      ctx.fill();
+      ctx.strokeStyle = active ? '#38bdf8' : 'rgba(148, 163, 184, 0.35)';
+      ctx.lineWidth = active ? 1.8 : 1.2;
+      ctx.stroke();
+      ctx.fillStyle = active ? '#ffffff' : '#cbd5e1';
+      ctx.font = canvasFont(700, Math.max(8, Math.round(9.5 * m.baseScale)));
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(tab.label, tab.x + tab.w * 0.5, tab.y + tab.h * 0.5);
+      ctx.restore();
+    }
+  }
+
+  // 8. Customizable Rotation Cluster (strictly hidden when not in Loose mode, visible in Edit mode)
+  if (isLoose) {
+    for (const btn of m.rotBtns) {
+      const active = player.rotMode === btn.id;
+      ctx.save();
+      ctx.globalAlpha = btn.opacity;
+      roundRectPath(ctx, btn.x, btn.y, btn.w, btn.h, 7);
+      ctx.fillStyle = active ? 'rgba(251, 191, 36, 0.30)' : 'rgba(20, 28, 42, 0.80)';
+      ctx.fill();
+      ctx.strokeStyle = active ? '#fbbf24' : 'rgba(148, 163, 184, 0.38)';
+      ctx.lineWidth = active ? 1.8 : 1.2;
+      ctx.stroke();
+      ctx.fillStyle = active ? '#fef3c7' : '#cbd5e1';
+      ctx.font = canvasFont(700, Math.max(8, Math.round(9.5 * m.baseScale)));
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(btn.label, btn.x + btn.w * 0.5, btn.y + btn.h * 0.5);
+      ctx.restore();
+    }
+  }
+
+  // 9. Customizable Scale Cluster (always active)
+  for (const btn of m.scaleBtns) {
+    const active = Math.abs(player.targetScale - btn.id) < 0.05;
+    ctx.save();
+    ctx.globalAlpha = btn.opacity;
+    roundRectPath(ctx, btn.x, btn.y, btn.w, btn.h, 7);
+    const col = btn.id === 0.6 ? '#fbbf24' : btn.id === 1.5 ? '#34d399' : '#38bdf8';
+    ctx.fillStyle = active ? 'rgba(56, 189, 248, 0.32)' : 'rgba(20, 28, 42, 0.80)';
+    ctx.fill();
+    ctx.strokeStyle = active ? col : 'rgba(148, 163, 184, 0.38)';
+    ctx.lineWidth = active ? 2 : 1.2;
+    ctx.stroke();
+    ctx.fillStyle = active ? '#ffffff' : '#cbd5e1';
+    ctx.font = canvasFont(800, Math.max(9, Math.round(10 * m.baseScale)));
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(btn.label, btn.x + btn.w * 0.5, btn.y + btn.h * 0.5);
+    ctx.restore();
+  }
+
+  // 10. AoV Cancel X Zone (shown while aiming an actual attack/dash or in Edit mode)
+  const isPureDefense = isDefenseStance && !isFortressActive;
+  if ((player.isAiming && !isPureDefense) || player.isAimingDash || editMode) {
+    renderCancelZone(ctx, m.cancel.cx, m.cancel.cy, m.cancel.r, live.cancelHovered, m.cancel.opacity);
+  }
+
+  // Edit Mode Selection Bounding Boxes
+  if (editMode) {
+    (Object.keys(m.widgetBounds) as MobileWidgetId[]).forEach((wid) => {
+      const box = m.widgetBounds[wid];
+      const isSel = opts?.selectedWidget === wid;
+      ctx.save();
+      roundRectPath(ctx, box.x - 4, box.y - 4, box.w + 8, box.h + 8, 10);
+      ctx.strokeStyle = isSel ? '#38bdf8' : 'rgba(226, 232, 240, 0.45)';
+      ctx.lineWidth = isSel ? 2.5 : 1.3;
+      ctx.setLineDash(isSel ? [] : [5, 4]);
+      ctx.stroke();
+      if (isSel) {
+        ctx.fillStyle = 'rgba(56, 189, 248, 0.14)';
+        ctx.fill();
+        ctx.font = canvasFont(700, 10);
+        ctx.fillStyle = '#bae6fd';
+        ctx.textAlign = 'center';
+        ctx.fillText(MOBILE_WIDGET_LABELS[wid], box.x + box.w * 0.5, box.y - 10);
+
+        // Crisp circular Rotate Icon Handle on rotatable widgets
+        const rh = getRotateHandlePos(m, wid);
+        if (rh) {
+          ctx.beginPath();
+          ctx.arc(rh.cx, rh.cy, rh.r, 0, Math.PI * 2);
+          ctx.fillStyle = '#0f172a';
+          ctx.fill();
+          ctx.strokeStyle = '#38bdf8';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+
+          // Vector circular-arrow rotate icon inside the badge
+          const ir = rh.r * 0.48;
+          ctx.beginPath();
+          ctx.arc(rh.cx, rh.cy, ir, -Math.PI * 0.72, Math.PI * 0.82);
+          ctx.strokeStyle = '#e0f2fe';
+          ctx.lineWidth = 2;
+          ctx.lineCap = 'round';
+          ctx.stroke();
+
+          // Arrowhead at end of arc
+          const tipA = Math.PI * 0.82;
+          const tx = rh.cx + Math.cos(tipA) * ir;
+          const ty = rh.cy + Math.sin(tipA) * ir;
+          ctx.beginPath();
+          ctx.moveTo(tx - 3.6, ty - 2.4);
+          ctx.lineTo(tx, ty);
+          ctx.lineTo(tx + 3.2, ty - 3.0);
+          ctx.strokeStyle = '#e0f2fe';
+          ctx.lineWidth = 1.9;
+          ctx.lineJoin = 'round';
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+    });
+  }
+}
+
+export function renderDesktopCanvasHUD(
+  ctx: CanvasRenderingContext2D,
+  player: Fighter,
+  live: LiveInputState,
+  pcConfig: PCControlConfig,
+): void {
+  const pc = live.pcLayout;
+  const s = pc.scale;
+  const kb = pcConfig.keybinds;
+
+  ctx.save();
+  ctx.globalAlpha = pc.opacity;
+
+  // Dock container
+  roundRectPath(ctx, pc.barRect.x, pc.barRect.y, pc.barRect.w, pc.barRect.h, 12);
+  ctx.fillStyle = 'rgba(15, 22, 34, 0.88)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(148, 163, 184, 0.30)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Form Buttons (1/2/3/4)
+  const formKeyMap: Record<FormKey, string> = {
+    loose: formatKeyLabel(kb.formLoose),
+    slot1: formatKeyLabel(kb.formSlot1),
+    slot2: formatKeyLabel(kb.formSlot2),
+    slot3: formatKeyLabel(kb.formSlot3),
+  };
+
+  for (const b of pc.formBtns) {
+    const active = player.form === b.id;
+    const info = getFormDisplay(player, b.id);
+    roundRectPath(ctx, b.x, b.y, b.w, b.h, 8);
+    ctx.fillStyle = active ? 'rgba(56, 189, 248, 0.25)' : 'rgba(30, 41, 59, 0.72)';
+    ctx.fill();
+    ctx.strokeStyle = active ? info.color : 'rgba(148, 163, 184, 0.28)';
+    ctx.lineWidth = active ? 2 : 1.1;
+    ctx.stroke();
+
+    ctx.fillStyle = active ? '#ffffff' : '#cbd5e1';
+    ctx.font = canvasFont(800, Math.max(9, Math.round(10.5 * s)));
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(info.label, b.x + b.w * 0.5, b.y + b.h * 0.42);
+
+    ctx.fillStyle = info.color;
+    ctx.font = canvasFont(700, Math.max(8, Math.round(8.5 * s)));
+    const subTag = isSlotKey(b.id) ? STANCE_META[player.loadout.blueprints[b.id].stance].short : 'TỰ DO';
+    ctx.fillText(`[${formKeyMap[b.id]}] ${subTag}`, b.x + b.w * 0.5, b.y + b.h * 0.78);
+  }
+
+  // Loose Hex Slots (1..N) + Select All + Recall + Fire Tabs
+  if (player.form === 'loose') {
+    for (const slot of pc.hexSlots) {
+      const hex = player.hexes[slot.id];
+      if (!hex) continue;
+      roundRectPath(ctx, slot.x, slot.y, slot.w, slot.h, 7);
+      let fill = 'rgba(30, 41, 59, 0.72)';
+      let stroke = 'rgba(148, 163, 184, 0.30)';
+      if (hex.state === 'BROKEN') {
+        fill = 'rgba(159, 18, 57, 0.55)';
+        stroke = '#fb7185';
+      } else if (hex.state === 'PLANTED' || hex.state === 'LAUNCHED') {
+        fill = hex.selected ? 'rgba(245, 158, 11, 0.62)' : 'rgba(180, 83, 9, 0.45)';
+        stroke = hex.selected ? '#ffffff' : '#fbbf24';
+      } else if (hex.selected) {
+        fill = 'rgba(14, 165, 233, 0.52)';
+        stroke = '#ffffff';
+      }
+      ctx.fillStyle = fill;
+      ctx.fill();
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = hex.selected ? 2 : 1.1;
+      ctx.stroke();
+
+      ctx.fillStyle = '#f8fafc';
+      ctx.font = canvasFont(800, Math.max(9, Math.round(11 * s)));
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(
+        hex.state === 'BROKEN' ? `${Math.ceil(hex.cooldown)}` : `${slot.id + 1}`,
+        slot.x + slot.w * 0.5,
+        slot.y + slot.h * 0.5,
+      );
+    }
+
+    // Select All
+    roundRectPath(ctx, pc.btnAll.x, pc.btnAll.y, pc.btnAll.w, pc.btnAll.h, 8);
+    ctx.fillStyle = 'rgba(30, 41, 59, 0.8)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.5)';
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+    ctx.fillStyle = '#bae6fd';
+    ctx.font = canvasFont(700, Math.max(9, Math.round(10 * s)));
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`Hết [${formatKeyLabel(kb.selectAll)}]`, pc.btnAll.x + pc.btnAll.w * 0.5, pc.btnAll.y + pc.btnAll.h * 0.5);
+
+    // Recall
+    const selPlanted = player.hexes.filter(
+      (h) => (h.state === 'PLANTED' || h.state === 'LAUNCHED') && h.selected,
+    ).length;
+    roundRectPath(ctx, pc.btnRecall.x, pc.btnRecall.y, pc.btnRecall.w, pc.btnRecall.h, 8);
+    ctx.fillStyle = selPlanted > 0 ? 'rgba(245, 158, 11, 0.38)' : 'rgba(30, 41, 59, 0.8)';
+    ctx.fill();
+    ctx.strokeStyle = selPlanted > 0 ? '#ffffff' : '#fbbf24';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = '#fef3c7';
+    ctx.fillText(
+      selPlanted > 0 ? `Thu (${selPlanted})` : 'Thu [RMB]',
+      pc.btnRecall.x + pc.btnRecall.w * 0.5,
+      pc.btnRecall.y + pc.btnRecall.h * 0.5,
+    );
+
+    // 3 Fire Mode Pills above Dock
+    for (const tab of pc.fireTabs) {
+      const active = player.fireMode === tab.id;
+      roundRectPath(ctx, tab.x, tab.y, tab.w, tab.h, 7);
+      ctx.fillStyle = active ? 'rgba(56, 189, 248, 0.34)' : 'rgba(15, 22, 34, 0.84)';
+      ctx.fill();
+      ctx.strokeStyle = active ? '#38bdf8' : 'rgba(148, 163, 184, 0.32)';
+      ctx.lineWidth = active ? 1.8 : 1.1;
+      ctx.stroke();
+      ctx.fillStyle = active ? '#ffffff' : '#cbd5e1';
+      ctx.font = canvasFont(700, Math.max(9, Math.round(10 * s)));
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(tab.label, tab.x + tab.w * 0.5, tab.y + tab.h * 0.5);
+    }
+
+    // Keybind hint tag beside fire tabs
+    if (pc.fireTabs.length > 0) {
+      const first = pc.fireTabs[0];
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = canvasFont(700, Math.max(8, Math.round(9.5 * s)));
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`[${formatKeyLabel(kb.cycleFire)}]`, first.x - 6, first.y + first.h * 0.5);
+    }
+  }
+
+  // Dash Button
+  roundRectPath(ctx, pc.dashBtn.x, pc.dashBtn.y, pc.dashBtn.w, pc.dashBtn.h, 8);
+  ctx.fillStyle = player.dashCooldown > 0 ? 'rgba(15, 23, 42, 0.85)' : 'rgba(16, 185, 129, 0.28)';
+  ctx.fill();
+  ctx.strokeStyle = player.dashCooldown > 0 ? 'rgba(148, 163, 184, 0.35)' : '#34d399';
+  ctx.lineWidth = 1.6;
+  ctx.stroke();
+  ctx.fillStyle = '#f8fafc';
+  ctx.font = canvasFont(800, Math.max(9, Math.round(10.5 * s)));
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(
+    player.dashCooldown > 0 ? `Lướt ${player.dashCooldown.toFixed(1)}s` : `Lướt [${formatKeyLabel(kb.dash)}]`,
+    pc.dashBtn.x + pc.dashBtn.w * 0.5,
+    pc.dashBtn.y + pc.dashBtn.h * 0.5,
+  );
+
+  // Special Skill Button
+  const spKey = getFighterSpecialKey(player);
+  const spMeta = SPECIAL_SKILLS[spKey];
+  roundRectPath(ctx, pc.specialBtn.x, pc.specialBtn.y, pc.specialBtn.w, pc.specialBtn.h, 8);
+  ctx.fillStyle = player.specialActive
+    ? 'rgba(192, 132, 252, 0.36)'
+    : player.specialCooldown > 0
+      ? 'rgba(15, 23, 42, 0.85)'
+      : 'rgba(30, 41, 59, 0.86)';
+  ctx.fill();
+  ctx.strokeStyle = player.specialCooldown > 0 && !player.specialActive ? 'rgba(148, 163, 184, 0.35)' : spMeta.color;
+  ctx.lineWidth = player.specialActive ? 2.4 : 1.7;
+  ctx.stroke();
+  ctx.fillStyle = '#f8fafc';
+  const spLabel = player.specialActive
+    ? `Ulti ${player.specialActive.timer.toFixed(1)}s`
+    : player.specialCooldown > 0
+      ? `Ulti (${Math.ceil(player.specialCooldown)}s)`
+      : `Ulti [${formatKeyLabel(kb.special)}]`;
+  ctx.fillText(spLabel, pc.specialBtn.x + pc.specialBtn.w * 0.5, pc.specialBtn.y + pc.specialBtn.h * 0.5);
+
+  ctx.restore();
+
+  // Cancel X Zone when aiming on PC
+  if (player.isAiming) {
+    renderCancelZone(ctx, pc.cancel.cx, pc.cancel.cy, pc.cancel.r, live.cancelHovered, 0.94);
+  }
+}

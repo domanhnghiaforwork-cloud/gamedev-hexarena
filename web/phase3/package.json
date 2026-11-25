@@ -1,0 +1,28 @@
+{
+  "name": "hex-arena-web-phase3",
+  "version": "3.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Hex Arena Web Phase 3 — Modular Core (60Hz Fixed Timestep), Free Hex Blueprint Editor (5-10 hexes), Dual-Mode Smart Mobile & PC Controls, 1v1 PvP & SQLite Auth",
+  "scripts": {
+    "start": "node start.mjs",
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "server": "tsx server/index.ts",
+    "tunnel": "powershell -ExecutionPolicy Bypass -File ./start_ngrok.ps1"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.2",
+    "tsx": "^4.23.15",
+    "typescript": "^5.8.3",
+    "vite": "^6.2.0",
+    "vitest": "^3.0.9"
+  },
+  "dependencies": {
+    "ws": "^8.23.0"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "module": "ESNext",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "baseUrl": ".",
+    "paths": {
+      "@config/*": ["src/config/*"],
+      "@core/*": ["src/core/*"],
+      "@attacks/*": ["src/core/attacks/*"],
+      "@ai/*": ["src/ai/*"],
+      "@audio/*": ["src/audio/*"],
+      "@render/*": ["src/render/*"],
+      "@input/*": ["src/input/*"],
+      "@ui/*": ["src/ui/*"],
+      "@storage/*": ["src/storage/*"],
+      "@net/*": ["src/net/*"]
+    }
+  },
+  "include": ["src", "server", "tests"]
+}
