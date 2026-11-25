@@ -19,6 +19,7 @@ import { getActiveStance } from '@core/structure';
 import type { FireMode, FormKey, GuidedSteerInput, MatchState, RotMode } from '@core/types';
 import type { ContinuousInputPacket, PvPAction } from '@net/protocol';
 import type { MobileHUDConfig, PCControlConfig } from '@storage/profiles';
+import { getViewportSize } from '@ui/fullscreen';
 import {
   computeDesktopDockLayout,
   computeSmartMobileLayout,
@@ -58,12 +59,33 @@ export function pointInRect(px: number, py: number, rect: Rect): boolean {
   return px >= rect.x && px <= rect.x + rect.w && py >= rect.y && py <= rect.y + rect.h;
 }
 
+export function pointInRectPadded(px: number, py: number, rect: Rect, pad = 5): boolean {
+  return px >= rect.x - pad && px <= rect.x + rect.w + pad && py >= rect.y - pad && py <= rect.y + rect.h + pad;
+}
+
+function findNearestRect<T extends Rect>(px: number, py: number, items: T[], pad = 5): T | null {
+  let best: T | null = null;
+  let bestDist = Infinity;
+  for (const item of items) {
+    if (!pointInRectPadded(px, py, item, pad)) continue;
+    const cx = item.x + item.w * 0.5;
+    const cy = item.y + item.h * 0.5;
+    const d = Math.hypot(px - cx, py - cy);
+    if (d < bestDist) {
+      bestDist = d;
+      best = item;
+    }
+  }
+  return best;
+}
+
 export class InputManager {
   public live: LiveInputState;
   private keys = new Set<string>();
   private paused = false;
   private wheelCooldown = 0;
   private inputSeq = 0;
+  private safeAreaProbe: HTMLDivElement | null = null;
 
   private canvas: HTMLCanvasElement;
   private getState: () => MatchState;
@@ -97,8 +119,7 @@ export class InputManager {
     this.onPvPAction = opts.onPvPAction ?? (() => {});
 
     const isCoarse = typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
+    const { vw, vh } = getViewportSize();
     const initMode: InputMode = isCoarse ? 'touch' : 'desktop';
     const state = this.getState();
 
@@ -149,22 +170,33 @@ export class InputManager {
   }
 
   public readSafeInsets(): SafeInsets {
-    const cs = getComputedStyle(document.documentElement);
+    if (typeof document === 'undefined' || !document.body) {
+      return { top: 0, right: 0, bottom: 0, left: 0 };
+    }
+    if (!this.safeAreaProbe) {
+      const el = document.createElement('div');
+      el.setAttribute('aria-hidden', 'true');
+      el.style.cssText =
+        'position:fixed;top:0;left:0;width:0;height:0;visibility:hidden;pointer-events:none;' +
+        'padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px);';
+      document.body.appendChild(el);
+      this.safeAreaProbe = el;
+    }
+    const cs = getComputedStyle(this.safeAreaProbe);
     const parse = (v: string) => {
       const n = parseFloat(v);
       return Number.isFinite(n) ? n : 0;
     };
     return {
-      top: parse(cs.getPropertyValue('--safe-top')),
-      right: parse(cs.getPropertyValue('--safe-right')),
-      bottom: parse(cs.getPropertyValue('--safe-bottom')),
-      left: parse(cs.getPropertyValue('--safe-left')),
+      top: parse(cs.paddingTop),
+      right: parse(cs.paddingRight),
+      bottom: parse(cs.paddingBottom),
+      left: parse(cs.paddingLeft),
     };
   }
 
   public recomputeLayouts(): void {
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
+    const { vw, vh } = getViewportSize();
     this.live.vw = vw;
     this.live.vh = vh;
     const state = this.getState();
@@ -867,32 +899,30 @@ export class InputManager {
     const { player } = state;
     const m = this.live.mobileLayout;
 
-    // 1. Scale Cluster (always active)
-    for (const btn of m.scaleBtns) {
-      if (pointInRect(px, py, btn)) {
-        this.dispatchAction({ kind: 'set_scale', scale: btn.id });
-        return;
-      }
+    // 1. Scale Cluster (always active, forgiving +5px hit padding with nearest-center tie-breaker)
+    const hitScale = findNearestRect(px, py, m.scaleBtns, 5);
+    if (hitScale) {
+      this.dispatchAction({ kind: 'set_scale', scale: hitScale.id });
+      return;
     }
 
     // 2. Rotation Cluster (Loose only — completely hidden & non-interactive in assembled forms)
     if (player.form === 'loose') {
-      for (const btn of m.rotBtns) {
-        if (pointInRect(px, py, btn)) {
-          this.dispatchAction({ kind: 'set_rot', rotMode: btn.id });
-          return;
-        }
+      const hitRot = findNearestRect(px, py, m.rotBtns, 5);
+      if (hitRot) {
+        this.dispatchAction({ kind: 'set_rot', rotMode: hitRot.id });
+        return;
       }
     }
 
-    // 3. Special Skill Button
-    if (dist(px, py, m.special.cx, m.special.cy) <= m.special.r + 10) {
+    // 3. Special Skill Button (Ulti)
+    if (dist(px, py, m.special.cx, m.special.cy) <= m.special.r + 8) {
       this.dispatchAction({ kind: 'special' });
       return;
     }
 
     // 4. Dash Button (Tap or drag to aim)
-    if (dist(px, py, m.dash.cx, m.dash.cy) <= m.dash.r + 10) {
+    if (dist(px, py, m.dash.cx, m.dash.cy) <= m.dash.r + 8) {
       this.live.dash.pointerId = e.pointerId;
       player.isAimingDash = true;
       this.updateDashDrag(px, py);
@@ -901,7 +931,7 @@ export class InputManager {
     }
 
     // 5. Form Switch Radial Button
-    if (dist(px, py, m.form.cx, m.form.cy) <= m.form.r + 10) {
+    if (dist(px, py, m.form.cx, m.form.cy) <= m.form.r + 8) {
       this.live.formRadial.pointerId = e.pointerId;
       this.live.formRadial.hoverIdx = -1;
       this.canvas.setPointerCapture(e.pointerId);
@@ -910,19 +940,18 @@ export class InputManager {
 
     // 6. Loose-only buttons (Recall, Select All, Fire Tabs, Arc-Selector 1..N)
     if (player.form === 'loose') {
-      if (pointInRect(px, py, m.btnRecall)) {
+      if (pointInRectPadded(px, py, m.btnRecall, 5)) {
         this.dispatchAction({ kind: 'smart_recall' });
         return;
       }
-      if (pointInRect(px, py, m.btnAll)) {
+      if (pointInRectPadded(px, py, m.btnAll, 5)) {
         this.dispatchAction({ kind: 'select_all' });
         return;
       }
-      for (const tab of m.fireTabs) {
-        if (pointInRect(px, py, tab)) {
-          this.dispatchAction({ kind: 'set_fire_mode', fireMode: tab.id });
-          return;
-        }
+      const hitFire = findNearestRect(px, py, m.fireTabs, 5);
+      if (hitFire) {
+        this.dispatchAction({ kind: 'set_fire_mode', fireMode: hitFire.id });
+        return;
       }
       const seg = this.hitTestArcSegment(px, py);
       if (seg !== -1) {
@@ -939,7 +968,7 @@ export class InputManager {
     }
 
     // 7. Attack / Shield-Aim Pad
-    if (dist(px, py, m.atk.cx, m.atk.cy) <= m.atk.r + 16) {
+    if (dist(px, py, m.atk.cx, m.atk.cy) <= m.atk.r + 14) {
       const isPureDefense = getActiveStance(player) === 'defense' && player.specialActive?.type !== 'defense';
       this.live.atk.pointerId = e.pointerId;
       player.isAiming = !isPureDefense;

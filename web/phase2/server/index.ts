@@ -463,13 +463,21 @@ server.on('connection', (socket: Socket) => {
   socket.setNoDelay(true);
 });
 
+interface AliveWebSocket extends WebSocket {
+  isAlive?: boolean;
+}
+
 const wss = new WebSocketServer({
   server,
   path: '/ws',
   perMessageDeflate: false, // Zero compression latency on tiny real-time packets
 });
 
-wss.on('connection', (ws, req) => {
+wss.on('connection', (ws: AliveWebSocket, req) => {
+  ws.isAlive = true;
+  ws.on('pong', () => {
+    ws.isAlive = true;
+  });
   req.socket?.setNoDelay?.(true);
 
   ws.on('message', (raw) => {
@@ -726,6 +734,24 @@ function tickServerLoop(): void {
   const remainingMs = Math.max(1, (FIXED_DT - serverAccumSec) * 1000);
   setTimeout(tickServerLoop, Math.min(4, Math.floor(remainingMs)));
 }
+
+// Clean up dead half-open WebSocket connections (e.g. mobile Safari backgrounded or dropped Wi-Fi)
+setInterval(() => {
+  for (const client of wss.clients as Set<AliveWebSocket>) {
+    if (client.isAlive === false) {
+      cleanupPeer(client);
+      client.terminate();
+      continue;
+    }
+    client.isAlive = false;
+    try {
+      client.ping();
+    } catch {
+      cleanupPeer(client);
+      client.terminate();
+    }
+  }
+}, 25_000);
 
 server.listen(PORT, () => {
   console.log(`[HexArena PvP Server] High-precision 60Hz Authoritative WS (TCP_NODELAY) on ws://localhost:${PORT}/ws`);

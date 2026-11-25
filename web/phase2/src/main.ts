@@ -21,7 +21,12 @@ import {
   type PCControlConfig,
 } from '@storage/profiles';
 import { AuthModal, renderSettingsModal } from '@ui/authModal';
-import { isDocumentFullscreen, tryLockLandscape } from '@ui/fullscreen';
+import {
+  FULLSCREEN_CHANGE_EVENT,
+  isDocumentFullscreen,
+  syncAppViewportVars,
+  tryLockLandscape,
+} from '@ui/fullscreen';
 import { HUDCustomizerController } from '@ui/hudCustomizer';
 import { LoadoutEditorModal } from '@ui/loadoutEditor';
 import { LobbyScreen, type LobbyPvPState } from '@ui/lobby';
@@ -192,6 +197,7 @@ const pvpClient = new PvPClient({
     topBar.setRematchStatus(0);
     if (pvpClient.rttMs > 0) topBar.setPing(pvpClient.rttMs);
     topBar.setVisible(true);
+    topBar.syncPortraitHint(false, input.live.mode);
     input.setPaused(pvpCountdownActive);
     input.clearAllInputs();
     input.recomputeLayouts();
@@ -245,17 +251,56 @@ const pvpClient = new PvPClient({
   },
 });
 
+const IOS_FS_GUIDE_HIDDEN_KEY = 'hex_arena_p2_ios_fs_guide_hidden';
+
+function showIOSFullscreenGuide(): void {
+  let hidden = false;
+  try {
+    hidden = localStorage.getItem(IOS_FS_GUIDE_HIDDEN_KEY) === '1';
+  } catch {
+    hidden = false;
+  }
+  if (hidden) {
+    topBar.showToast('Đã bật chế độ Tập trung iOS (Thêm vào MH chính từ Safari để toàn màn hình 100%).');
+    return;
+  }
+  const overlay = document.getElementById('iosFsGuideOverlay');
+  if (overlay) {
+    overlay.classList.remove('hidden');
+  }
+}
+
+function bindIOSGuideModal(): void {
+  const overlay = document.getElementById('iosFsGuideOverlay');
+  const chk = document.getElementById('iosFsDontShow') as HTMLInputElement | null;
+  const closeGuide = () => {
+    if (chk?.checked) {
+      try {
+        localStorage.setItem(IOS_FS_GUIDE_HIDDEN_KEY, '1');
+      } catch {
+        // Ignore storage error
+      }
+    }
+    overlay?.classList.add('hidden');
+  };
+  document.getElementById('iosFsClose')?.addEventListener('click', closeGuide);
+  document.getElementById('iosFsOk')?.addEventListener('click', closeGuide);
+}
+bindIOSGuideModal();
+
 const topBar = new TopBarController({
   getState: () => state,
   onOpenLobby: () => enterLobby(),
   onOpenLoadout: () => openLoadoutEditor(),
   onOpenCustomize: () => openHUDCustomizer(),
+  onOpenSettings: () => openSettingsModal(),
   onToggleMode: () => toggleInputMode(),
   onToggleSound: () => {
     soundFX.enabled = !soundFX.enabled;
     return soundFX.enabled;
   },
   onOpenHelp: () => openHelpModal(),
+  onShowIOSGuide: () => showIOSFullscreenGuide(),
   onRestart: () => {
     if (matchMode === 'pvp') {
       pvpClient.requestRematch();
@@ -296,6 +341,7 @@ const lobby = new LobbyScreen({
     else openAuthModal('login');
   },
   onNotify: (msg) => topBar.showToast(msg),
+  onShowIOSGuide: () => showIOSFullscreenGuide(),
   onPvPTabChange: (tab) => {
     if (tab === 'bot' && lobbyPvP.waitingCode) {
       pvpClient.leaveRoom();
@@ -397,6 +443,7 @@ function enterLobby(): void {
   topBar.hideCountdown();
   topBar.hideMatchOver();
   input.setPaused(true);
+  topBar.syncPortraitHint(true, input.live.mode);
   lobby.show(playerLoadout, input.live.mode, lobbyPvP, authClient.user);
 }
 
@@ -416,6 +463,7 @@ function startNewBotMatch(): void {
   topBar.setPlayerName(authClient.user?.username ?? null);
   topBar.setMatchModeLabel(false);
   topBar.setVisible(true);
+  topBar.syncPortraitHint(false, input.live.mode);
   input.setPaused(false);
   input.clearAllInputs();
   input.recomputeLayouts();
@@ -607,12 +655,16 @@ function processLocalSimEvents(): void {
 }
 
 function handleViewportOrOrientationChange(): void {
+  syncAppViewportVars();
   renderer.resize();
   input.recomputeLayouts();
+  topBar.syncPortraitHint(inLobby, input.live.mode);
   refreshLobbyIfVisible();
 }
 
 window.addEventListener('resize', handleViewportOrOrientationChange);
+window.visualViewport?.addEventListener('resize', handleViewportOrOrientationChange);
+window.visualViewport?.addEventListener('scroll', handleViewportOrOrientationChange);
 window.addEventListener('orientationchange', () => {
   window.setTimeout(handleViewportOrOrientationChange, 120);
 });
@@ -629,8 +681,10 @@ const onFullscreenSync = () => {
 };
 document.addEventListener('fullscreenchange', onFullscreenSync);
 document.addEventListener('webkitfullscreenchange', onFullscreenSync);
+document.addEventListener(FULLSCREEN_CHANGE_EVENT, onFullscreenSync);
 
-// Initialize into clean Lobby & restore SQLite user session if token present
+// Initialize viewport sizing, Lobby & restore SQLite user session if token present
+syncAppViewportVars();
 topBar.syncMode(input.live.mode);
 enterLobby();
 void authClient.restoreSession().then((user) => {

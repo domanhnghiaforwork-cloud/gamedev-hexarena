@@ -110,14 +110,18 @@ export function computeSmartMobileLayout(
   config: MobileHUDConfig,
   insets: SafeInsets = { top: 0, right: 0, bottom: 0, left: 0 },
 ): MobileComputedLayout {
-  const safeTop = Math.max(54, insets.top + 48);
+  const safeTop = Math.max(50, insets.top + 46);
   const safeBottom = Math.max(8, insets.bottom + 6);
-  const safeLeft = Math.max(8, insets.left + 6);
-  const safeRight = Math.max(8, insets.right + 6);
+  const safeLeft = Math.max(8, insets.left + 8);
+  const safeRight = Math.max(8, insets.right + 8);
 
   const usableW = Math.max(240, vw - safeLeft - safeRight);
   const usableH = Math.max(200, vh - safeTop - safeBottom);
-  const s = clamp(Math.min(vw, vh) / 420, 0.72, 1.24);
+  const isPortrait = vh > vw;
+  // Dual-axis scaling handles ultra-wide 20:9 phones, notched iPhones, small phones, and large iPads evenly!
+  const s = isPortrait
+    ? clamp(Math.min(usableW / 440, usableH / 640), 0.68, 1.05)
+    : clamp(Math.min(usableW / 760, usableH / 340), 0.68, 1.18);
 
   const posOf = (id: MobileWidgetId, halfW: number, halfH: number) => {
     const w = config.widgets[id];
@@ -144,9 +148,9 @@ export function computeSmartMobileLayout(
   // Attack + Arc-Selector (auto-adapts sweep for 5..10 hexes & supports custom rotation!)
   const atkScale = config.widgets.atk.scale;
   const atkR = 40 * s * atkScale;
-  const arcInnerR = 56 * s * atkScale;
-  const arcOuterR = 100 * s * atkScale;
-  const atkP = posOf('atk', atkR + 14, atkR + 14);
+  const arcInnerR = 54 * s * atkScale;
+  const arcOuterR = 92 * s * atkScale;
+  const atkP = posOf('atk', atkR + 10, atkR + 10);
   const atk: CircleWidget = { cx: atkP.cx, cy: atkP.cy, r: atkR, opacity: atkP.opacity };
 
   // Expand sweep slightly for 8..10 hexes so each segment stays easy to tap & swipe!
@@ -186,31 +190,31 @@ export function computeSmartMobileLayout(
   };
 
   // Dash
-  const dashR = 25 * s * config.widgets.dash.scale;
+  const dashR = 26 * s * config.widgets.dash.scale;
   const dashP = posOf('dash', dashR + 4, dashR + 4);
   const dash: CircleWidget = { cx: dashP.cx, cy: dashP.cy, r: dashR, opacity: dashP.opacity };
 
   // Form Switch (radial wheel rotates with custom rotation!)
-  const formR = 25 * s * config.widgets.form.scale;
+  const formR = 26 * s * config.widgets.form.scale;
   const formP = posOf('form', formR + 4, formR + 4);
   const form: CircleWidget = { cx: formP.cx, cy: formP.cy, r: formR, opacity: formP.opacity };
   const formRotRad = (rotDegOf('form') * Math.PI) / 180;
 
   // Special Skill
-  const specR = 25 * s * config.widgets.special.scale;
+  const specR = 28 * s * config.widgets.special.scale;
   const specP = posOf('special', specR + 4, specR + 4);
   const special: CircleWidget = { cx: specP.cx, cy: specP.cy, r: specR, opacity: specP.opacity };
 
   // Cancel X Zone
-  const cancelR = 27 * s * config.widgets.cancel.scale;
+  const cancelR = 25 * s * config.widgets.cancel.scale;
   const cancelP = posOf('cancel', cancelR + 4, cancelR + 4);
   const cancel: CircleWidget = { cx: cancelP.cx, cy: cancelP.cy, r: cancelR, opacity: cancelP.opacity };
 
   // Recall + Select All cluster (0°: vertical All/Rec, 90°: horizontal All|Rec, 180°: vertical Rec/All, 270°: horizontal Rec|All)
   const recScale = s * config.widgets.recall.scale;
-  const recW = 72 * recScale;
-  const allH = 25 * recScale;
-  const recH = 29 * recScale;
+  const recW = 74 * recScale;
+  const allH = 26 * recScale;
+  const recH = 30 * recScale;
   const recGap = 6 * recScale;
   const recQ = Math.round(rotDegOf('recall') / 90) % 4;
   const recHorizontal = recQ === 1 || recQ === 3;
@@ -295,11 +299,11 @@ export function computeSmartMobileLayout(
   const ftLayout = layoutLinearStrip<FireMode>(
     'fireTabs',
     [
-      { id: 'xayah', label: 'Cắm & Thu', w: 66 * ftScale },
-      { id: 'seq', label: 'Lần lượt', w: 56 * ftScale },
-      { id: 'volley', label: 'Đồng loạt', w: 62 * ftScale },
+      { id: 'xayah', label: 'Cắm & Thu', w: 68 * ftScale },
+      { id: 'seq', label: 'Lần lượt', w: 58 * ftScale },
+      { id: 'volley', label: 'Đồng loạt', w: 64 * ftScale },
     ],
-    24 * ftScale,
+    27 * ftScale,
     4 * ftScale,
   );
   const fireTabs = ftLayout.btns;
@@ -310,11 +314,11 @@ export function computeSmartMobileLayout(
   const rotLayout = layoutLinearStrip<RotMode>(
     'rotCluster',
     [
-      { id: 'static', label: 'Tĩnh', w: 46 * rotScale },
-      { id: 'normal', label: 'P.Tuyến', w: 62 * rotScale },
-      { id: 'random', label: 'N.Nhiên', w: 62 * rotScale },
+      { id: 'static', label: 'Tĩnh', w: 48 * rotScale },
+      { id: 'normal', label: 'P.Tuyến', w: 64 * rotScale },
+      { id: 'random', label: 'N.Nhiên', w: 64 * rotScale },
     ],
-    28 * rotScale,
+    29 * rotScale,
     4 * rotScale,
   );
   const rotBtns = rotLayout.btns;
@@ -325,11 +329,11 @@ export function computeSmartMobileLayout(
   const scLayout = layoutLinearStrip<ScaleTier>(
     'scaleCluster',
     [
-      { id: 0.6, label: '60%', w: 48 * scScale },
-      { id: 1.0, label: '100%', w: 52 * scScale },
-      { id: 1.5, label: '150%', w: 52 * scScale },
+      { id: 0.6, label: '60%', w: 50 * scScale },
+      { id: 1.0, label: '100%', w: 54 * scScale },
+      { id: 1.5, label: '150%', w: 54 * scScale },
     ],
-    28 * scScale,
+    29 * scScale,
     4 * scScale,
   );
   const scaleBtns = scLayout.btns;

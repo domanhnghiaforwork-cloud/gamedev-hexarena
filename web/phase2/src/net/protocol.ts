@@ -295,12 +295,17 @@ export function buildSeatSnapshot(
           : 'enemy'
         : state.winner;
 
-  const mappedEvents: SimEvent[] = events.map((ev) => {
-    if (ev.type === 'matchEnd' && flip && ev.playerWon !== null) {
-      return { type: 'matchEnd', playerWon: !ev.playerWon };
+  const mappedEvents: SimEvent[] = [];
+  for (const ev of events) {
+    if ((ev.type === 'toast' || ev.type === 'haptic') && ev.target && ev.target !== seat) {
+      continue;
     }
-    return ev;
-  });
+    if (ev.type === 'matchEnd' && flip && ev.playerWon !== null) {
+      mappedEvents.push({ type: 'matchEnd', playerWon: !ev.playerWon });
+    } else {
+      mappedEvents.push(ev);
+    }
+  }
 
   return {
     tick,
@@ -310,7 +315,7 @@ export function buildSeatSnapshot(
     matchOver: state.matchOver,
     winner: mappedWinner,
     dmgDealt: flip ? state.stats.enemyDmg : state.stats.dmgDealt,
-    hexBroken: state.stats.hexBroken,
+    hexBroken: flip ? state.stats.enemyHexBroken : state.stats.hexBroken,
     elapsed: r1(state.stats.elapsed),
     self: serializeFighter(selfF, flip),
     opp: serializeFighter(oppF, flip),

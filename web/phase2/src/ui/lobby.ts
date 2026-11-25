@@ -4,7 +4,7 @@ import type { MaterialId, PlayerLoadout, SlotKey, WeaponBlueprint } from '@core/
 import type { InputMode } from '@input/inputManager';
 import type { AuthUser } from '@net/authClient';
 import { drawHexPolygon } from '@render/arenaRenderer';
-import { isDocumentFullscreen, toggleFullscreenLandscape } from '@ui/fullscreen';
+import { FULLSCREEN_CHANGE_EVENT, isDocumentFullscreen, toggleFullscreenLandscape } from '@ui/fullscreen';
 
 const SLOT_KEYS: SlotKey[] = ['slot1', 'slot2', 'slot3'];
 
@@ -44,6 +44,7 @@ export class LobbyScreen {
   private onOpenSettings: () => void;
   private onOpenAuth: () => void;
   private onNotify: (msg: string) => void;
+  private onShowIOSGuide?: () => void;
   private onPvPTabChange: (tab: 'bot' | 'pvp') => void;
   private onJoinCodeInput: (code: string) => void;
 
@@ -57,6 +58,7 @@ export class LobbyScreen {
     onOpenSettings: () => void;
     onOpenAuth: () => void;
     onNotify: (msg: string) => void;
+    onShowIOSGuide?: () => void;
     onPvPTabChange: (tab: 'bot' | 'pvp') => void;
     onJoinCodeInput: (code: string) => void;
   }) {
@@ -69,8 +71,19 @@ export class LobbyScreen {
     this.onOpenSettings = opts.onOpenSettings;
     this.onOpenAuth = opts.onOpenAuth;
     this.onNotify = opts.onNotify;
+    this.onShowIOSGuide = opts.onShowIOSGuide;
     this.onPvPTabChange = opts.onPvPTabChange;
     this.onJoinCodeInput = opts.onJoinCodeInput;
+
+    document.addEventListener(FULLSCREEN_CHANGE_EVENT, () => {
+      const fsBtn = this.mount.querySelector<HTMLButtonElement>('#lobbyFsBtn');
+      if (!fsBtn) return;
+      const isFs = isDocumentFullscreen();
+      fsBtn.classList.toggle('active', isFs);
+      fsBtn.title = isFs ? 'Thoát toàn màn hình' : 'Toàn màn hình';
+      fsBtn.setAttribute('aria-label', fsBtn.title);
+      fsBtn.innerHTML = isFs ? SVG_EXIT_FS : SVG_ENTER_FS;
+    });
   }
 
   public show(loadout: PlayerLoadout, mode: InputMode, pvp: LobbyPvPState, user: AuthUser | null): void {
@@ -238,7 +251,7 @@ export class LobbyScreen {
     this.mount.querySelector('#lobbySettingsBtn')?.addEventListener('click', () => this.onOpenSettings());
     this.mount.querySelector('#lobbyUserBtn')?.addEventListener('click', () => this.onOpenAuth());
     this.mount.querySelector('#lobbyFsBtn')?.addEventListener('click', () => {
-      void toggleFullscreenLandscape(this.onNotify);
+      void toggleFullscreenLandscape(this.onNotify, this.onShowIOSGuide);
     });
 
     this.mount.querySelectorAll<HTMLElement>('[data-mode-tab]').forEach((btn) => {

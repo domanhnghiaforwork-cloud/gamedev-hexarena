@@ -72,10 +72,11 @@ export function applyHexDurabilityLoss(
     state.hitStopTimer = Math.max(state.hitStopTimer, 0.045);
     state.events.push({ type: 'hitStop', duration: 0.045 });
     state.events.push({ type: 'shake', amount: 10 });
-    state.events.push({ type: 'haptic', pattern: [24, 18, 28] });
+    state.events.push({ type: 'haptic', pattern: [24, 18, 28], target: defender.id });
 
-    if (attacker && attacker.id === 'player') {
-      state.stats.hexBroken++;
+    if (attacker) {
+      if (attacker.id === 'player') state.stats.hexBroken++;
+      else state.stats.enemyHexBroken++;
     }
 
     if (wasAssembled && defender.form !== 'loose') {
@@ -195,7 +196,7 @@ export function damageFighterBody(
     state.hitStopTimer = Math.max(state.hitStopTimer, 0.042);
     state.events.push({ type: 'hitStop', duration: 0.042 });
     state.events.push({ type: 'shake', amount: 8.5 });
-    state.events.push({ type: 'haptic', pattern: [18] });
+    state.events.push({ type: 'haptic', pattern: [18], target: attacker.id });
     state.events.push({ type: 'sfx', kind: 'pierce' });
   } else {
     state.events.push({

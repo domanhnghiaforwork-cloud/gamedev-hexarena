@@ -1,0 +1,19 @@
+{
+  "name": "Hex Arena — Đấu trường Lục giác",
+  "short_name": "Hex Arena",
+  "description": "Đấu trường lục giác đối kháng 1v1 thời gian thực",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#141a25",
+  "theme_color": "#141a25",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

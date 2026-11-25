@@ -4,6 +4,7 @@ import { findPlantedHexAtWorld } from '@core/skills';
 import type { MatchState } from '@core/types';
 import type { LiveInputState } from '@input/inputManager';
 import type { MobileWidgetId, PCControlConfig } from '@storage/profiles';
+import { getViewportSize } from '@ui/fullscreen';
 import { renderArena } from './arenaRenderer';
 import { renderFighterBody, renderFighterHexLayer } from './entityRenderer';
 import { renderDesktopCanvasHUD, renderMobileCanvasHUD } from './hudRenderer';
@@ -32,8 +33,9 @@ export class GameRenderer {
 
   public resize(): void {
     this.dpr = Math.min(window.devicePixelRatio || 1, 2.0);
-    this.vw = window.innerWidth;
-    this.vh = window.innerHeight;
+    const { vw, vh } = getViewportSize();
+    this.vw = vw;
+    this.vh = vh;
     this.canvas.width = Math.round(this.vw * this.dpr);
     this.canvas.height = Math.round(this.vh * this.dpr);
   }

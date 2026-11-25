@@ -126,7 +126,7 @@ export function updateBotAI(state: MatchState, dt: number): void {
       (enemyStance === 'melee' && dToPlayer < 210) ||
       (enemy.form === 'loose' && dToPlayer < 360)
     ) {
-      triggerFighterSpecial(state, enemy);
+      triggerFighterSpecial(state, enemy, applyHexDurabilityLoss);
       enemy.specialCooldown += 3.0;
     }
   }

@@ -70,4 +70,29 @@ describe('PvP Netcode — Angle Lerp, Timeline Interpolation & Client-Side Predi
 
     expect(clientState.player.x).toBeCloseTo(startX + expectedDelta, 1);
   });
+
+  it('maps hexBroken symmetrically for Guest seat and filters private toast/haptic events by target seat', () => {
+    const serverState = createMatchState(undefined, undefined, Math.random, false);
+    serverState.stats.hexBroken = 2;
+    serverState.stats.enemyHexBroken = 5;
+
+    const events = [
+      { type: 'toast' as const, message: 'Host-only notice', target: 'player' as const },
+      { type: 'toast' as const, message: 'Guest-only notice', target: 'enemy' as const },
+      { type: 'haptic' as const, pattern: [12], target: 'player' as const },
+      { type: 'sfx' as const, kind: 'clash' as const },
+    ];
+
+    const hostSnap = buildSeatSnapshot(serverState, 'player', 1, 1000, 0, events);
+    const guestSnap = buildSeatSnapshot(serverState, 'enemy', 1, 1000, 0, events);
+
+    expect(hostSnap.hexBroken).toBe(2);
+    expect(guestSnap.hexBroken).toBe(5);
+    expect(hostSnap.events.some((e) => e.type === 'toast' && e.message === 'Guest-only notice')).toBe(false);
+    expect(hostSnap.events.some((e) => e.type === 'toast' && e.message === 'Host-only notice')).toBe(true);
+    expect(guestSnap.events.some((e) => e.type === 'toast' && e.message === 'Host-only notice')).toBe(false);
+    expect(guestSnap.events.some((e) => e.type === 'toast' && e.message === 'Guest-only notice')).toBe(true);
+    expect(guestSnap.events.some((e) => e.type === 'haptic')).toBe(false);
+    expect(guestSnap.events.some((e) => e.type === 'sfx')).toBe(true);
+  });
 });

@@ -8,53 +8,104 @@ import {
 import {
   createDefaultPCConfig,
   createMobileHUDPreset,
+  MOBILE_HUD_VERSION,
+  sanitizeMobileHUDConfig,
   type MobilePresetId,
   type MobileWidgetId,
 } from '@storage/profiles';
 
+function rectGap(
+  a: { x: number; y: number; w: number; h: number },
+  b: { x: number; y: number; w: number; h: number },
+): number {
+  const dx = Math.max(0, b.x - (a.x + a.w), a.x - (b.x + b.w));
+  const dy = Math.max(0, b.y - (a.y + a.h), a.y - (b.y + b.h));
+  if (dx > 0 || dy > 0) return Math.hypot(dx, dy);
+  const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+  const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+  return -Math.min(ox, oy);
+}
+
 describe('Dual-Mode Smart Mobile HUD & PC Dock Layout Solver', () => {
   const viewports = [
-    { name: 'iPhone SE landscape', vw: 667, vh: 375 },
-    { name: 'iPhone 14 landscape', vw: 844, vh: 390 },
-    { name: 'Android 20:9 landscape', vw: 915, vh: 412 },
-    { name: 'iPad landscape', vw: 1024, vh: 768 },
+    { name: 'Small Android landscape', vw: 568, vh: 320, insets: { top: 0, right: 0, bottom: 0, left: 0 } },
+    { name: 'iPhone SE landscape', vw: 667, vh: 375, insets: { top: 0, right: 0, bottom: 0, left: 0 } },
+    { name: 'iPhone 14 Notch landscape', vw: 844, vh: 390, insets: { top: 0, right: 44, bottom: 21, left: 44 } },
+    { name: 'iPhone 16 Pro Max Dynamic Island', vw: 932, vh: 430, insets: { top: 0, right: 52, bottom: 21, left: 52 } },
+    { name: 'Android 20:9 landscape', vw: 915, vh: 412, insets: { top: 0, right: 24, bottom: 12, left: 24 } },
+    { name: 'iPad Mini landscape', vw: 1024, vh: 768, insets: { top: 0, right: 0, bottom: 20, left: 0 } },
+    { name: 'iPad Pro landscape', vw: 1366, vh: 1024, insets: { top: 0, right: 0, bottom: 20, left: 0 } },
   ];
   const presets: MobilePresetId[] = ['4-finger', '3-finger', '2-finger'];
 
-  it('keeps all mobile widgets inside safe viewport bounds across 4 devices, 3 presets, and 5..10 hexes', () => {
+  it('keeps all mobile widgets inside safe bounds with ZERO overlap and >= 8px clearance across 7 real devices', () => {
     for (const vp of viewports) {
       for (const preset of presets) {
         const cfg = createMobileHUDPreset(preset);
         for (const hexCount of [5, 7, 10]) {
-          const layout = computeSmartMobileLayout(vp.vw, vp.vh, hexCount, cfg, {
-            top: 0,
-            right: 20,
-            bottom: 12,
-            left: 20,
-          });
+          const layout = computeSmartMobileLayout(vp.vw, vp.vh, hexCount, cfg, vp.insets);
 
           expect(layout.arc.hexCount).toBe(hexCount);
-          // Every widget center must sit strictly inside viewport
           const widgetKeys = Object.keys(layout.widgetBounds) as MobileWidgetId[];
+
+          // 1. Every interactive widget stays strictly inside safe viewport bounds
           for (const k of widgetKeys) {
             const b = layout.widgetBounds[k];
-            const cx = b.x + b.w * 0.5;
-            const cy = b.y + b.h * 0.5;
-            expect(cx).toBeGreaterThan(0);
-            expect(cx).toBeLessThan(vp.vw);
-            expect(cy).toBeGreaterThan(0);
-            expect(cy).toBeLessThan(vp.vh);
+            expect(b.x).toBeGreaterThanOrEqual(layout.safeLeft - 1);
+            expect(b.x + b.w).toBeLessThanOrEqual(vp.vw - layout.safeRight + 1);
+            expect(b.y).toBeGreaterThanOrEqual(layout.safeTop - 1);
+            expect(b.y + b.h).toBeLessThanOrEqual(vp.vh - layout.safeBottom + 1);
           }
 
-          // 2-finger preset places Rotation & Scale lower (closer to thumbs) than 4-finger Claw
+          // 2. Zero overlap and minimum 8px gap between every pair of interactive widgets
+          for (let i = 0; i < widgetKeys.length; i++) {
+            for (let j = i + 1; j < widgetKeys.length; j++) {
+              const g = rectGap(layout.widgetBounds[widgetKeys[i]], layout.widgetBounds[widgetKeys[j]]);
+              expect(g).toBeGreaterThanOrEqual(8);
+            }
+          }
+
+          // 3. Primary action buttons meet ergonomic touch diameter (>= 44px on standard phones iPhone SE / 14+)
+          if (vp.vw >= 667) {
+            expect(layout.dash.r * 2).toBeGreaterThanOrEqual(44);
+            expect(layout.form.r * 2).toBeGreaterThanOrEqual(44);
+            expect(layout.special.r * 2).toBeGreaterThanOrEqual(46);
+            expect(layout.atk.r * 2).toBeGreaterThanOrEqual(68);
+            expect(layout.joy.r * 2).toBeGreaterThanOrEqual(86);
+          }
+
+          // 4. 2-finger preset places Rotation & Scale lower (closer to thumbs) than 4-finger Claw
           if (preset === '2-finger') {
-            const claw = computeSmartMobileLayout(vp.vw, vp.vh, hexCount, createMobileHUDPreset('4-finger'));
+            const claw = computeSmartMobileLayout(vp.vw, vp.vh, hexCount, createMobileHUDPreset('4-finger'), vp.insets);
             expect(layout.rotGroupRect.y).toBeGreaterThan(claw.rotGroupRect.y);
             expect(layout.scaleGroupRect.y).toBeGreaterThan(claw.scaleGroupRect.y);
           }
         }
       }
     }
+  });
+
+  it('migrates legacy v1 mobile HUD configs cleanly to v2 while preserving custom v2 positions and rotations', () => {
+    const legacyV1 = {
+      version: 1,
+      preset: '4-finger',
+      snapGrid: false,
+      widgets: {
+        atk: { nx: 0.88, ny: 0.79, scale: 1.0, opacity: 0.94 },
+      },
+    };
+    const migrated = sanitizeMobileHUDConfig(legacyV1);
+    expect(migrated.version).toBe(MOBILE_HUD_VERSION);
+    expect(migrated.snapGrid).toBe(false);
+    expect(migrated.widgets.recall.nx).toBeCloseTo(createMobileHUDPreset('4-finger').widgets.recall.nx, 4);
+
+    const customV2 = createMobileHUDPreset('2-finger');
+    customV2.widgets.atk.nx = 0.82;
+    customV2.widgets.atk.rotation = 45;
+    const kept = sanitizeMobileHUDConfig(customV2);
+    expect(kept.version).toBe(MOBILE_HUD_VERSION);
+    expect(kept.widgets.atk.nx).toBeCloseTo(0.82, 4);
+    expect(kept.widgets.atk.rotation).toBe(45);
   });
 
   it('expands mobile Arc-Selector sweep angle smoothly when scaling up to 10 hexes', () => {

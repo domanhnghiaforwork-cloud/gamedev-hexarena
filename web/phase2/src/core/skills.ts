@@ -38,7 +38,7 @@ export function getLooseLaunchRange(strength: number): number {
 export function setFighterScale(state: MatchState, fighter: Fighter, scaleVal: ScaleTier): void {
   if (fighter.specialActive?.type === 'defense') {
     if (!fighter.isAI) {
-      state.events.push({ type: 'toast', message: 'Pháo Đài đang giữ kích thước 150%!' });
+      state.events.push({ type: 'toast', message: 'Pháo Đài đang giữ kích thước 150%!', target: fighter.id });
     }
     return;
   }
@@ -51,7 +51,7 @@ export function setFighterScale(state: MatchState, fighter: Fighter, scaleVal: S
 export function setFighterRotMode(state: MatchState, fighter: Fighter, rotMode: RotMode): void {
   if (fighter.form !== 'loose') {
     if (!fighter.isAI) {
-      state.events.push({ type: 'toast', message: 'Xoay trục chỉ bật ở trạng thái Đơn lẻ!' });
+      state.events.push({ type: 'toast', message: 'Xoay trục chỉ bật ở trạng thái Đơn lẻ!', target: fighter.id });
     }
     return;
   }
@@ -157,7 +157,7 @@ export function executeFighterDash(state: MatchState, fighter: Fighter, angle: n
   if (fighter.specialActive?.type === 'defense') {
     if (!fighter.isAI) {
       state.events.push({ type: 'sfx', kind: 'cancel' });
-      state.events.push({ type: 'toast', message: 'Đang bật Pháo Đài — không thể Lướt!' });
+      state.events.push({ type: 'toast', message: 'Đang bật Pháo Đài — không thể Lướt!', target: fighter.id });
     }
     return false;
   }
@@ -181,7 +181,7 @@ export function executeFighterDash(state: MatchState, fighter: Fighter, angle: n
     color,
   });
   state.events.push({ type: 'sfx', kind: 'dash' });
-  if (!fighter.isAI) state.events.push({ type: 'haptic', pattern: [12] });
+  if (!fighter.isAI) state.events.push({ type: 'haptic', pattern: [12], target: fighter.id });
   return true;
 }
 
@@ -367,7 +367,7 @@ export function triggerFighterSpecial(
     size: 3.4,
   });
   state.events.push({ type: 'sfx', kind: 'special' });
-  if (!fighter.isAI) state.events.push({ type: 'haptic', pattern: [16, 12, 16] });
+  if (!fighter.isAI) state.events.push({ type: 'haptic', pattern: [16, 12, 16], target: fighter.id });
   return true;
 }
 
@@ -518,7 +518,7 @@ export function performMeleeParrySteal(
     state.events.push({ type: 'hitStop', duration: 0.048 });
     state.events.push({ type: 'shake', amount: 8 });
     state.events.push({ type: 'sfx', kind: 'pierce' });
-    if (!att.isAI) state.events.push({ type: 'haptic', pattern: [20, 14, 22] });
+    if (!att.isAI) state.events.push({ type: 'haptic', pattern: [20, 14, 22], target: att.id });
     return true;
   } else {
     if (anim.stolenCount >= 3 || isHexStolen(dh)) return false;
@@ -542,7 +542,7 @@ export function performMeleeParrySteal(
     state.events.push({ type: 'hitStop', duration: 0.042 });
     state.events.push({ type: 'shake', amount: 7 });
     state.events.push({ type: 'sfx', kind: 'pierce' });
-    if (!att.isAI) state.events.push({ type: 'haptic', pattern: [18, 12, 18] });
+    if (!att.isAI) state.events.push({ type: 'haptic', pattern: [18, 12, 18], target: att.id });
     return true;
   }
 }
@@ -684,6 +684,7 @@ export function executeFighterAttack(
           state.events.push({
             type: 'toast',
             message: `Chọn mảnh (1–${fighter.hexes.length}) hoặc bấm Chọn hết để phóng!`,
+            target: fighter.id,
           });
         }
       }

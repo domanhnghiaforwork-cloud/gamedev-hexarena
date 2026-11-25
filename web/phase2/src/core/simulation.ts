@@ -50,6 +50,7 @@ export function createMatchState(
       dmgDealt: 0,
       enemyDmg: 0,
       hexBroken: 0,
+      enemyHexBroken: 0,
       elapsed: 0,
     },
     events: [],

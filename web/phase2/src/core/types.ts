@@ -304,6 +304,7 @@ export interface MatchStats {
   dmgDealt: number;
   enemyDmg: number;
   hexBroken: number;
+  enemyHexBroken: number;
   elapsed: number;
 }
 
@@ -335,10 +336,10 @@ export type SimEvent =
   | { type: 'shockwave'; x: number; y: number; r: number; maxR: number; life: number; color: string }
   | { type: 'floatingText'; x: number; y: number; text: string; color: string; scale: number }
   | { type: 'sfx'; kind: SfxKind }
-  | { type: 'haptic'; pattern: number[] }
+  | { type: 'haptic'; pattern: number[]; target?: FighterId }
   | { type: 'shake'; amount: number }
   | { type: 'hitStop'; duration: number }
-  | { type: 'toast'; message: string }
+  | { type: 'toast'; message: string; target?: FighterId }
   | { type: 'matchEnd'; playerWon: boolean | null };
 
 export interface MatchState {

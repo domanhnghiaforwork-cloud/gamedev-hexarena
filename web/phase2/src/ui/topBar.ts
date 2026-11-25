@@ -3,7 +3,12 @@ import { getActiveBlueprint } from '@core/structure';
 import type { MatchState, RotMode, ScaleTier } from '@core/types';
 import type { InputMode } from '@input/inputManager';
 import { formatKeyLabel, type PCControlConfig } from '@storage/profiles';
-import { isDocumentFullscreen, toggleFullscreenLandscape } from '@ui/fullscreen';
+import {
+  FULLSCREEN_CHANGE_EVENT,
+  getViewportSize,
+  isDocumentFullscreen,
+  toggleFullscreenLandscape,
+} from '@ui/fullscreen';
 
 export class TopBarController {
   private topBarEl = document.getElementById('topBar')!;
@@ -29,6 +34,7 @@ export class TopBarController {
   private btnPlayAgain = document.getElementById('btnPlayAgain')!;
   private btnOverLoadout = document.getElementById('btnOverLoadout')!;
   private toastBanner = document.getElementById('toastBanner')!;
+  private portraitHintBar = document.getElementById('portraitHintBar')!;
   private countdownOverlay = document.getElementById('matchCountdownOverlay')!;
   private countdownNumber = document.getElementById('countdownNumber')!;
   private countdownSub = document.getElementById('countdownSub')!;
@@ -38,22 +44,32 @@ export class TopBarController {
 
   private toastTimeout: number | null = null;
   private countdownHideTimeout: number | null = null;
+  private portraitDismissed = false;
+  private onShowIOSGuide?: () => void;
 
   constructor(opts: {
     getState: () => MatchState;
     onOpenLobby: () => void;
     onOpenLoadout: () => void;
     onOpenCustomize: () => void;
+    onOpenSettings: () => void;
     onToggleMode: () => void;
     onToggleSound: () => boolean;
     onOpenHelp: () => void;
+    onShowIOSGuide?: () => void;
     onRestart: () => void;
     onSetRot: (rot: RotMode) => void;
     onSetScale: (scale: ScaleTier) => void;
   }) {
+    this.onShowIOSGuide = opts.onShowIOSGuide;
     document.getElementById('btnLobby')?.addEventListener('click', opts.onOpenLobby);
     this.btnLoadout.addEventListener('click', opts.onOpenLoadout);
     document.getElementById('btnCustomize')?.addEventListener('click', opts.onOpenCustomize);
+    document.getElementById('btnMatchSettings')?.addEventListener('click', opts.onOpenSettings);
+    document.getElementById('btnDismissPortrait')?.addEventListener('click', () => {
+      this.portraitDismissed = true;
+      this.portraitHintBar.classList.add('hidden');
+    });
     this.btnModeToggle.addEventListener('click', opts.onToggleMode);
     this.btnFullscreen.addEventListener('click', () => this.toggleFullscreen());
     this.btnSound.addEventListener('click', () => {
@@ -92,6 +108,8 @@ export class TopBarController {
 
     document.addEventListener('fullscreenchange', () => this.syncFullscreenBtn());
     document.addEventListener('webkitfullscreenchange', () => this.syncFullscreenBtn());
+    document.addEventListener(FULLSCREEN_CHANGE_EVENT, () => this.syncFullscreenBtn());
+    this.syncFullscreenBtn();
   }
 
   public setPlayerName(name: string | null): void {
@@ -161,6 +179,14 @@ export class TopBarController {
   public syncMode(mode: InputMode): void {
     this.btnModeToggle.textContent = mode === 'desktop' ? 'Chế độ: PC' : 'Chế độ: Mobile';
     this.pcQuickPanels.classList.toggle('hidden-mobile', mode === 'touch');
+    this.topBarEl.classList.toggle('compact-touch', mode === 'touch');
+  }
+
+  public syncPortraitHint(inLobby: boolean, mode: InputMode): void {
+    const { vw, vh } = getViewportSize();
+    const isPortrait = vh > vw;
+    const show = !inLobby && mode === 'touch' && isPortrait && !this.portraitDismissed;
+    this.portraitHintBar.classList.toggle('hidden', !show);
   }
 
   public syncFrame(state: MatchState, pcConfig: PCControlConfig): void {
@@ -236,7 +262,7 @@ export class TopBarController {
   }
 
   private toggleFullscreen(): void {
-    void toggleFullscreenLandscape((msg) => this.showToast(msg));
+    void toggleFullscreenLandscape((msg) => this.showToast(msg), this.onShowIOSGuide);
   }
 
   private syncFullscreenBtn(): void {

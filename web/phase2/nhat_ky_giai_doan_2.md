@@ -154,6 +154,20 @@ Tài liệu ghi nhận quá trình phát triển nhánh **Giai đoạn 2** trong
 * **Đếm ngược 3 — 2 — 1 — CHIẾN! (`index.html`, `src/ui/topBar.ts`, `src/feedback/sound.ts`, `server/index.ts`):**
   * Hiển thị sẵn cả 2 chiến binh trên đấu trường, khóa di chuyển/tấn công trong 3 giây đếm ngược kèm hiệu ứng phóng chữ và âm thanh báo hiệu `3 → 2 → 1 → CHIẾN!` đồng bộ tuyệt đối giữa 2 máy.
 
+---
+
+## v2.11 — 24/11/2026: Khắc phục Toàn màn hình trên iOS, Tối ưu Mặc định HUD Điện thoại & Sửa lỗi Tiềm ẩn Toàn dự án
+* **Hỗ trợ Toàn màn hình trên iOS & iPadOS (`src/ui/fullscreen.ts`, `public/manifest.webmanifest`, `index.html`, `src/main.ts`):**
+  * Tự động nhận diện thiết bị iOS / iPadOS và chế độ Web App Màn hình chính (`standalone`): thay vì báo lỗi không hỗ trợ khi iPhone Safari thiếu Fullscreen API, nút Toàn màn hình chuyển mượt sang **Chế độ tập trung iOS** (khóa cuộn cao su, co thanh Safari theo `visualViewport`, hiện bảng hướng dẫn 2 bước **Chia sẻ → Thêm vào MH chính** có tùy chọn *Không hiện lại*).
+  * Bổ sung **PWA Manifest + Biểu tượng SVG** và dải nhắc xoay ngang gọn nhẹ khi cầm dọc trên điện thoại.
+* **Tối ưu lại hoàn toàn Bố cục Mặc định HUD Điện thoại v2 (`src/storage/profiles.ts`, `src/input/hudPresets.ts`, `src/input/inputManager.ts`):**
+  * Đặt mặc định **2 Ngón** với khoảng cách an toàn chống bấm nhầm tuyệt đối (`>= 12px` khe hở giữa mọi nút, không bao giờ chồng chéo trên 7 kích cỡ màn hình từ Android nhỏ `568×320`, iPhone Notch/Dynamic Island đến iPad Pro kể cả khi mang đủ 10 mảnh).
+  * Sửa lỗi đọc vùng an toàn tai thỏ (`safe-area-inset-*`) bằng đầu dò CSS thực tế, bổ sung vùng chạm nới `+5px` và chọn nút gần tâm nhất khi chạm sát ranh giới cụm phím.
+  * Rút gọn thanh trên trong trận cho Mobile (`Cài đặt` gộp gọn trên 1 hàng duy nhất để không che màn chơi).
+* **Sửa lỗi Tiềm ẩn & Tối ưu Hiệu năng (`src/core/*`, `src/net/protocol.ts`, `src/render/vfxRenderer.ts`, `server/index.ts`):**
+  * Sửa lỗi thống kê `hexBroken` của người chơi Khách trong PvP và lọc sự kiện `toast` / `haptic` theo đúng `target` chỗ ngồi để hai bên không nhận nhầm thông báo của nhau.
+  * Bổ sung giới hạn số lượng hạt/sóng xung kích/chữ nổi trong `VFXManager` giữ mượt `60fps` trên máy yếu và thêm nhịp tim WebSocket (`ping/pong` 25s) dọn socket treo khi Safari chuyển nền.
+
 
 
 

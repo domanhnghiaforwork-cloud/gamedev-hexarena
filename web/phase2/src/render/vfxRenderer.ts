@@ -35,11 +35,27 @@ interface FloatingText {
   maxLife: number;
 }
 
+const MAX_PARTICLES = 180;
+const MAX_SHOCKWAVES = 24;
+const MAX_FLOATING_TEXTS = 36;
+
 export class VFXManager {
   public particles: Particle[] = [];
   public shockwaves: Shockwave[] = [];
   public floatingTexts: FloatingText[] = [];
   public screenShake = 0;
+
+  private enforceCaps(): void {
+    if (this.particles.length > MAX_PARTICLES) {
+      this.particles.splice(0, this.particles.length - MAX_PARTICLES);
+    }
+    if (this.shockwaves.length > MAX_SHOCKWAVES) {
+      this.shockwaves.splice(0, this.shockwaves.length - MAX_SHOCKWAVES);
+    }
+    if (this.floatingTexts.length > MAX_FLOATING_TEXTS) {
+      this.floatingTexts.splice(0, this.floatingTexts.length - MAX_FLOATING_TEXTS);
+    }
+  }
 
   public clear(): void {
     this.particles.length = 0;
@@ -117,6 +133,7 @@ export class VFXManager {
         this.screenShake = Math.max(this.screenShake, ev.amount);
       }
     }
+    this.enforceCaps();
   }
 
   public update(dt: number): void {
