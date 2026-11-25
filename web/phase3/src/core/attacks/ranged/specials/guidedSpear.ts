@@ -45,6 +45,8 @@ export function clearGuidedWaypoint(state: MatchState, fighter: Fighter): boolea
   return true;
 }
 
+export const GUIDED_SPEAR_DMG_MULT = 0.675;
+
 export const GUIDED_SPEAR_SKILL: SpecialSkillDefinition = {
   id: BUILTIN_SPECIAL_SKILL_IDS.RANGED_GUIDED_SPEAR,
   modeId: 'ranged',
@@ -55,7 +57,7 @@ export const GUIDED_SPEAR_SKILL: SpecialSkillDefinition = {
   color: '#c084fc',
   targeting: 'direction',
   aimRange: 380,
-  desc: 'Tách vũ khí bay tự do (tốc ~0.56× dễ lái, +35% sát thương). Click bay qua điểm (PC) / kéo hướng lái (Mobile) hoặc Tự động săn địch.',
+  desc: 'Tách vũ khí bay tự do (tốc ~0.56× dễ lái, 0.675× sát thương). Click bay qua điểm (PC) / kéo hướng lái (Mobile) hoặc Tự động săn địch.',
   activate: ({ state, fighter, aimAngle }) => {
     const assembled = fighter.hexes.filter((h) => h.state === 'ASSEMBLED');
     if (assembled.length === 0) {

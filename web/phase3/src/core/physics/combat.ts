@@ -15,6 +15,7 @@ import {
 } from '../world/obstacles';
 import { triggerShieldMiniPulse } from '../attacks/defense/specials/counterFortress';
 import { performMeleeParrySteal } from '../attacks/melee/specials/parryDisarm';
+import { GUIDED_SPEAR_DMG_MULT } from '../attacks/ranged/specials/guidedSpear';
 import {
   SNIPER_SLOW_DURATION,
   SNIPER_SLOW_FACTOR,
@@ -393,7 +394,7 @@ function resolveAttacksVsWalls(state: MatchState): void {
       const anim = att.attackAnim;
       const isReturn = anim.phase === 'return';
       const isGuided = anim.phase === 'guided';
-      const passDmgMult = isReturn ? 0.5 : isGuided ? 1.35 : 1.0;
+      const passDmgMult = isReturn ? 0.5 : isGuided ? GUIDED_SPEAR_DMG_MULT : 1.0;
       const spearHexes = att.hexes.filter((h) => h.state === 'ASSEMBLED');
       const dirX = Math.cos(anim.angle);
       const dirY = Math.sin(anim.angle);
@@ -583,7 +584,7 @@ export function resolveCombatCollisions(state: MatchState): void {
       const anim = att.attackAnim;
       const isReturn = anim.phase === 'return';
       const isGuided = anim.phase === 'guided';
-      const passDmgMult = isReturn ? 0.5 : isGuided ? 1.35 : 1.0;
+      const passDmgMult = isReturn ? 0.5 : isGuided ? GUIDED_SPEAR_DMG_MULT : 1.0;
       const spearHexes = att.hexes.filter((h) => h.state === 'ASSEMBLED');
       const dirX = Math.cos(anim.angle);
       const dirY = Math.sin(anim.angle);
