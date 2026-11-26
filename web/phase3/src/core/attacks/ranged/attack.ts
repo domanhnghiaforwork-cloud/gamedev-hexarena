@@ -1,10 +1,27 @@
 import { BASE_HEX_RADIUS } from '../../constants';
 import { clamp } from '../../math/hexMath';
-import { computeRangedKineticEnergy, getActiveAnchorDist, isRangedSniperActive } from '../../world/structure';
+import {
+  computeRangedKineticEnergy,
+  getActiveAnchorDist,
+  isRangedBlinkActive,
+  isRangedSniperActive,
+} from '../../world/structure';
+import { executeBlinkToSpear } from './specials/blinkSpear';
 import { fireRangedSniperShot } from './specials/sniperStage';
 import type { AttackExecuteContext } from '../types';
 
-export function executeRangedAttack({ state, fighter, angle, strength }: AttackExecuteContext): void {
+export function executeRangedAttack({
+  state,
+  fighter,
+  angle,
+  strength,
+  applyHexDurabilityLoss,
+}: AttackExecuteContext): void {
+  if (isRangedBlinkActive(fighter)) {
+    const opponent = fighter.id === 'player' ? state.enemy : state.player;
+    executeBlinkToSpear(state, fighter, opponent, applyHexDurabilityLoss);
+    return;
+  }
   if (isRangedSniperActive(fighter)) {
     fireRangedSniperShot(state, fighter, angle);
     return;

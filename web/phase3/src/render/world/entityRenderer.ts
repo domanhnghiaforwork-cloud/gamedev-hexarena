@@ -1,13 +1,13 @@
 import { DEFAULT_COSMETICS, getNeonTheme, type PlayerCosmetics } from '@config/cosmetics';
 import { canvasFont } from '@config/typography';
+import { BLINK_SHOCKWAVE_RADIUS } from '@attacks/ranged/specials/blinkSpear';
 import { AXIAL_DIRS, BASE_HEX_RADIUS, PLAYER_RADIUS } from '@core/constants';
-import { axialKey, axialToLocal, clamp } from '@core/math/hexMath';
+import { axialKey, clamp } from '@core/math/hexMath';
 import { segmentIntersectsAnyObstacle } from '@core/world/obstacles';
 import {
   RANGED_SNIPER_CONE_HALF_ANGLE,
   RANGED_SNIPER_RANGE,
   computePrismWebClusters,
-  getActiveStance,
   getLooseGravityFieldRadius,
   getLooseOrbitRadius,
   isDefenseFortressActive,
@@ -15,6 +15,7 @@ import {
   isHexStolen,
   isLooseGravityFieldActive,
   isLoosePrismWebActive,
+  isRangedBlinkActive,
   isRangedSniperActive,
 } from '@core/world/structure';
 import type { Fighter, HexEntity, Obstacle, SummonedWall } from '@core/types';
@@ -696,65 +697,60 @@ export function renderFighterHexLayer(
     ctx.restore();
   }
 
-  // Draw Guided Ranged Weapon Dashed Target Silhouette (dynamic for ANY 5..10 hex blueprint!)
+  // Draw Blink Spear Tether & Arrival Shockwave Beacon (Phi Thương Biến Ảnh)
   if (
     !highFlightOnly &&
-    getActiveStance(f) === 'ranged' &&
+    isRangedBlinkActive(f) &&
     f.attackAnim?.type === 'ranged' &&
-    f.attackAnim.phase === 'guided' &&
-    !f.isAI
+    (f.attackAnim.phase === 'blink_out' || f.attackAnim.phase === 'blink_planted')
   ) {
     const anim = f.attackAnim;
-    const assembled = f.hexes.filter((h) => h.state === 'ASSEMBLED');
-    if (assembled.length > 0) {
-      ctx.save();
-      // Dashed connector from current weapon anchor to target destination
-      ctx.strokeStyle = anim.isManualSteer ? 'rgba(192, 132, 252, 0.72)' : 'rgba(56, 189, 248, 0.52)';
-      ctx.lineWidth = 2;
-      ctx.setLineDash([7, 6]);
-      ctx.beginPath();
-      ctx.moveTo(anim.anchorX, anim.anchorY);
-      ctx.lineTo(anim.targetX, anim.targetY);
-      ctx.stroke();
+    const blinkColor = isPlayer ? '#c084fc' : '#fb7185';
+    const pulse = 0.5 + 0.5 * Math.sin(nowSec * 8);
 
-      // Dashed weapon blueprint silhouette at target destination
-      const cosT = Math.cos(anim.targetAngle);
-      const sinT = Math.sin(anim.targetAngle);
-      ctx.strokeStyle = anim.isManualSteer ? '#e879f9' : '#7dd3fc';
-      ctx.fillStyle = anim.isManualSteer ? 'rgba(192, 132, 252, 0.14)' : 'rgba(56, 189, 248, 0.10)';
-      ctx.lineWidth = 1.8;
-      ctx.setLineDash([5, 4]);
-      for (const h of assembled) {
-        const loc = axialToLocal(h.animQ, h.animR, R);
-        const gx = anim.targetX + loc.x * cosT - loc.y * sinT;
-        const gy = anim.targetY + loc.x * sinT + loc.y * cosT;
-        drawHexPolygon(ctx, gx, gy, R * 0.94, anim.targetAngle + Math.PI / 6);
-        ctx.fill();
-        ctx.stroke();
-      }
+    ctx.save();
+    // Glowing dashed tether connecting fighter to spear anchor
+    ctx.strokeStyle = blinkColor;
+    ctx.globalAlpha = 0.65;
+    ctx.lineWidth = 2.0;
+    ctx.setLineDash([7, 6]);
+    ctx.lineDashOffset = -nowSec * 42;
+    ctx.beginPath();
+    ctx.moveTo(f.x, f.y);
+    ctx.lineTo(anim.anchorX, anim.anchorY);
+    ctx.stroke();
 
-      // Status tag ("BAY QUA" / "LÁI" / "TỰ ĐỘNG" + countdown) + rotating diamond lock reticle
-      ctx.setLineDash([]);
-      ctx.save();
-      ctx.translate(anim.targetX, anim.targetY);
-      ctx.rotate(nowSec * 2.5);
-      ctx.strokeStyle = anim.isManualSteer ? '#f0abfc' : '#c084fc';
-      ctx.lineWidth = 1.6;
-      ctx.strokeRect(-7, -7, 14, 14);
-      ctx.restore();
+    // Shockwave arrival preview ring
+    ctx.globalAlpha = 0.22 + 0.08 * pulse;
+    ctx.lineWidth = 1.6;
+    ctx.setLineDash([8, 6]);
+    ctx.beginPath();
+    ctx.arc(anim.anchorX, anim.anchorY, BLINK_SHOCKWAVE_RADIUS, 0, Math.PI * 2);
+    ctx.stroke();
 
+    // Teleport landing ring + rotating diamond beacon
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 0.85;
+    ctx.lineWidth = 2.0;
+    ctx.beginPath();
+    ctx.arc(anim.anchorX, anim.anchorY, PLAYER_RADIUS + 4 + pulse * 2.5, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.save();
+    ctx.translate(anim.anchorX, anim.anchorY);
+    ctx.rotate(nowSec * 3.0);
+    ctx.strokeRect(-7, -7, 14, 14);
+    ctx.restore();
+
+    if (isPlayer) {
       const rem = f.specialActive ? f.specialActive.timer.toFixed(1) : '0.0';
-      const label = anim.hasCmd
-        ? `BAY QUA · ${rem}s`
-        : anim.isManualSteer
-          ? `LÁI · ${rem}s`
-          : `TỰ ĐỘNG · ${rem}s`;
-      ctx.font = canvasFont(700, 11);
+      ctx.globalAlpha = 0.95;
+      ctx.font = canvasFont(800, 11);
       ctx.textAlign = 'center';
-      ctx.fillStyle = anim.isManualSteer ? '#f0abfc' : '#bae6fd';
-      ctx.fillText(label, anim.targetX, anim.targetY - R * 2.1);
-      ctx.restore();
+      ctx.fillStyle = '#e879f9';
+      ctx.fillText(`BIẾN ẢNH · ${rem}s`, anim.anchorX, anim.anchorY - PLAYER_RADIUS - 12);
     }
+    ctx.restore();
   }
 
   // Two-pass Glowing Edge-Weld Bridges between adjacent assembled hexes (ground layer only)

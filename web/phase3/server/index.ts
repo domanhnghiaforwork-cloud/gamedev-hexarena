@@ -10,10 +10,8 @@ import { FIXED_DT, MAX_HEX_COUNT, MIN_HEX_COUNT, PLAYER_MOVE_SPEED } from '../sr
 import { clamp } from '../src/core/math/hexMath';
 import { createMatchState, stepSimulation } from '../src/core/physics/simulation';
 import {
-  clearGuidedWaypoint,
   executeFighterAttack,
   executeFighterDash,
-  issueGuidedWaypoint,
   recallSpecificHex,
   setFighterForm,
   setFighterRotMode,
@@ -530,12 +528,6 @@ function applyAction(state: MatchState, fighter: Fighter, action: PvPAction): vo
       if (hex) recallSpecificHex(state, fighter, hex);
       break;
     }
-    case 'guided_waypoint':
-      issueGuidedWaypoint(state, fighter, action.wx, action.wy, action.withRipple);
-      break;
-    case 'guided_clear':
-      clearGuidedWaypoint(state, fighter);
-      break;
   }
 }
 

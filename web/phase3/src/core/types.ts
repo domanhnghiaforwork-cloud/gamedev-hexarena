@@ -186,7 +186,7 @@ export interface SpecialActiveState {
 
 export interface RangedAttackAnim {
   type: 'ranged';
-  phase: 'out' | 'guided' | 'ricochet' | 'return';
+  phase: 'out' | 'blink_out' | 'blink_planted' | 'ricochet' | 'return';
   timer: number;
   duration: number;
   angle: number;

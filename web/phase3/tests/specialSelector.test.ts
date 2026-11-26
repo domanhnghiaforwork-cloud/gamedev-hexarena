@@ -172,7 +172,7 @@ describe('In-Match Special Skill Selector & Switching Framework', () => {
     }
   });
 
-  it('passes aimAngle and aimStrength into SpecialSkillContext and launches Guided Spear along aimed angle', () => {
+  it('passes aimAngle and aimStrength into SpecialSkillContext and launches Blink Spear along aimed angle', () => {
     const loadout = createDefaultLoadout();
     const state = createMatchState(loadout, loadout, () => 0.5, false);
     const { player } = state;
@@ -188,7 +188,7 @@ describe('In-Match Special Skill Selector & Switching Framework', () => {
     expect(player.facing).toBeCloseTo(targetAngle, 5);
     expect(player.attackAnim?.type).toBe('ranged');
     if (player.attackAnim?.type === 'ranged') {
-      expect(player.attackAnim.phase).toBe('guided');
+      expect(player.attackAnim.phase).toBe('blink_out');
       expect(player.attackAnim.angle).toBeCloseTo(targetAngle, 5);
     }
   });

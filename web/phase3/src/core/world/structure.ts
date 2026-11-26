@@ -442,6 +442,13 @@ export const HEX_WALL_PLACE_CD = 0.5;
 export const RANGED_SNIPER_CONE_HALF_ANGLE = (32 * Math.PI) / 180;
 export const RANGED_SNIPER_RANGE = 1050;
 
+export function isRangedBlinkActive(fighter: Fighter): boolean {
+  return (
+    fighter.specialActive?.type === 'ranged' &&
+    fighter.specialActive.skillId === 'ranged:blink_spear'
+  );
+}
+
 export function isRangedSniperActive(fighter: Fighter): boolean {
   return (
     fighter.specialActive?.type === 'ranged' &&

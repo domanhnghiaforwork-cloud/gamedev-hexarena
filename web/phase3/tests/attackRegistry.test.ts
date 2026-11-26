@@ -20,7 +20,7 @@ describe('Phase 3 Extensible Attack Registry (1-to-N Specials) & Typography', ()
     expect(modes.map((m) => m.id)).toEqual(['loose', 'ranged', 'melee', 'defense']);
 
     expect(getAttackMode('loose')?.defaultSpecialSkillId).toBe(BUILTIN_SPECIAL_SKILL_IDS.LOOSE_GRAVITY_FIELD);
-    expect(getAttackMode('ranged')?.defaultSpecialSkillId).toBe(BUILTIN_SPECIAL_SKILL_IDS.RANGED_GUIDED_SPEAR);
+    expect(getAttackMode('ranged')?.defaultSpecialSkillId).toBe(BUILTIN_SPECIAL_SKILL_IDS.RANGED_BLINK_SPEAR);
     expect(getAttackMode('melee')?.defaultSpecialSkillId).toBe(BUILTIN_SPECIAL_SKILL_IDS.MELEE_PARRY_DISARM);
     expect(getAttackMode('defense')?.defaultSpecialSkillId).toBe(BUILTIN_SPECIAL_SKILL_IDS.DEFENSE_COUNTER_FORTRESS);
 

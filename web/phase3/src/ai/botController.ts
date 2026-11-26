@@ -12,7 +12,6 @@ import { isCircleBlockedByObstacle, segmentIntersectsAnyObstacle } from '@core/w
 import {
   executeFighterAttack,
   executeFighterDash,
-  issueGuidedWaypoint,
   setFighterForm,
   setFighterRotMode,
   setFighterScale,
@@ -24,6 +23,7 @@ import {
   getLooseGravityFieldRadius,
   isDefenseFortressActive,
   isLooseGravityFieldActive,
+  isRangedBlinkActive,
 } from '@core/world/structure';
 import type { CombatStance, Fighter, FormKey, MatchState, Obstacle, ScaleTier, SlotKey } from '@core/types';
 
@@ -33,7 +33,6 @@ interface BotBrain {
   tactic: BotTactic;
   formLockTimer: number;
   strafeFlipTimer: number;
-  guidedWaypointTimer: number;
   lastPlayerSpecial: string | null;
   shieldTiltSign: 1 | -1;
 }
@@ -56,7 +55,6 @@ function getBrain(enemy: Fighter): BotBrain {
       tactic: 'poke',
       formLockTimer: 0,
       strafeFlipTimer: 2.2,
-      guidedWaypointTimer: 0,
       lastPlayerSpecial: null,
       shieldTiltSign: 1,
     };
@@ -93,9 +91,9 @@ function findNearestIncomingThreat(enemy: Fighter, player: Fighter): ThreatInfo 
   let best: ThreatInfo | null = null;
   let bestDist = 250;
 
-  if (player.attackAnim && player.attackAnim.type === 'ranged') {
+  if (player.attackAnim && player.attackAnim.type === 'ranged' && player.attackAnim.phase !== 'blink_planted') {
     const anim = player.attackAnim;
-    const spd = anim.phase === 'guided' ? (anim.guidedSpeed ?? 380) : anim.phase === 'return' ? anim.retSpeed : anim.outSpeed;
+    const spd = anim.phase === 'return' ? anim.retSpeed : anim.outSpeed;
     const vx = Math.cos(anim.angle) * spd;
     const vy = Math.sin(anim.angle) * spd;
     const dx = enemy.x - anim.anchorX;
@@ -269,12 +267,12 @@ function chooseCounterPlan(state: MatchState, brain: BotBrain, dToPlayer: number
   brain.tactic = tactic;
 
   if (targetForm !== enemy.form) {
-    // Hold off form switch only if we are actively steering a live Ranged spear unless facing Pháo Đài
-    const activeGuided =
-      enemy.specialActive?.type === 'ranged' &&
+    // Hold off form switch while Bot has a live Blink Spear out unless facing Pháo Đài
+    const activeBlink =
+      isRangedBlinkActive(enemy) &&
       enemy.attackAnim?.type === 'ranged' &&
-      enemy.attackAnim.phase === 'guided';
-    if (!activeGuided || playerSpec === 'defense') {
+      (enemy.attackAnim.phase === 'blink_out' || enemy.attackAnim.phase === 'blink_planted');
+    if (!activeBlink || playerSpec === 'defense') {
       setFighterForm(state, enemy, targetForm);
       brain.formLockTimer = playerSpec ? 0.65 : 1.65;
     }
@@ -308,35 +306,21 @@ function hasRecallLineThroughPlayer(enemy: Fighter, player: Fighter): boolean {
   return false;
 }
 
-function steerGuidedSpear(state: MatchState, enemy: Fighter, player: Fighter, brain: BotBrain, dt: number): void {
+function updateBotBlinkSpear(state: MatchState, enemy: Fighter, player: Fighter): void {
+  if (!isRangedBlinkActive(enemy)) return;
   const anim = enemy.attackAnim;
-  if (!anim || anim.type !== 'ranged' || anim.phase !== 'guided') return;
-  brain.guidedWaypointTimer -= dt;
-  if (brain.guidedWaypointTimer > 0) return;
-  brain.guidedWaypointTimer = 0.16;
+  if (!anim || anim.type !== 'ranged') return;
+  if (anim.phase !== 'blink_out' && anim.phase !== 'blink_planted') return;
 
-  const R = BASE_HEX_RADIUS * enemy.currentScale;
-  const obsBlocked = segmentIntersectsAnyObstacle(state.obstacles, anim.anchorX, anim.anchorY, player.x, player.y, R * 0.8);
-  const shieldBlocked = isPointShieldedByPlayer(player, anim.anchorX, anim.anchorY);
+  const spearToPlayer = dist(anim.anchorX, anim.anchorY, player.x, player.y);
+  const botToPlayer = dist(enemy.x, enemy.y, player.x, player.y);
+  const spearAway = dist(anim.anchorX, anim.anchorY, enemy.x, enemy.y);
+  const unsafeMelee = player.specialActive?.type === 'melee' || isDefenseFortressActive(player);
 
-  let wx = player.x + player.vx * 0.22;
-  let wy = player.y + player.vy * 0.22;
-
-  if (shieldBlocked) {
-    // Curve behind opponent's shield!
-    const backAng = player.facing + Math.PI;
-    const flankSide = angleDiff(backAng, Math.atan2(anim.anchorY - player.y, anim.anchorX - player.x)) >= 0 ? 1 : -1;
-    const targetAng = backAng + flankSide * 0.45;
-    wx = player.x + Math.cos(targetAng) * 95;
-    wy = player.y + Math.sin(targetAng) * 95;
-  } else if (obsBlocked) {
-    const toP = Math.atan2(player.y - anim.anchorY, player.x - anim.anchorX);
-    const perp = chooseBestPerpAngle(anim.anchorX, anim.anchorY, toP, 110, state.obstacles);
-    wx = anim.anchorX + Math.cos(perp) * 115;
-    wy = anim.anchorY + Math.sin(perp) * 115;
+  // Blink in to burst/shockwave OR blink away when rushed!
+  if ((spearToPlayer <= 128 && !unsafeMelee) || (botToPlayer < 135 && spearAway > 220)) {
+    triggerFighterSpecial(state, enemy, applyHexDurabilityLoss);
   }
-
-  issueGuidedWaypoint(state, enemy, wx, wy, false);
 }
 
 export function updateBotAI(state: MatchState, dt: number): void {
@@ -522,8 +506,8 @@ export function updateBotAI(state: MatchState, dt: number): void {
     }
   }
 
-  // Steer Ngự Thương Độc Lập around shields & obstacles via issueGuidedWaypoint
-  steerGuidedSpear(state, enemy, player, brain, dt);
+  // Reactivate Phi Thương Biến Ảnh tactically when spear reaches target or for escape
+  updateBotBlinkSpear(state, enemy, player);
 
   // 6. Smart Attack Timing, Xayah Pincer Recall & Counter-Pulse Release
   if (enemy.form === 'loose' && hasRecallLineThroughPlayer(enemy, player)) {

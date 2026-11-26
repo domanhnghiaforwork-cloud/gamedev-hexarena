@@ -2,14 +2,12 @@ import { PLAYER_MOVE_SPEED, SCALE_TIERS } from '@core/constants';
 import { applyHexDurabilityLoss } from '@core/physics/combat';
 import { clamp, dist } from '@core/math/hexMath';
 import {
-  clearGuidedWaypoint,
   executeFighterAttack,
   executeFighterDash,
   findPlantedHexAtWorld,
   getFighterAttackModeId,
   getFighterSelectedSpecialInfo,
   getSpecialSkillsForMode,
-  issueGuidedWaypoint,
   recallSpecificHex,
   setFighterForm,
   setFighterRotMode,
@@ -24,6 +22,7 @@ import {
   getActiveStance,
   isDefenseFortressActive,
   isDefenseHexWallActive,
+  isRangedBlinkActive,
   isRangedSniperActive,
 } from '@core/world/structure';
 import type { AttackModeId, FireMode, FormKey, GuidedSteerInput, MatchState, RotMode } from '@core/types';
@@ -76,7 +75,6 @@ export interface LiveInputState {
   specialRadial: SpecialRadialState;
   pcPaint: { pointerId: number | null; paintValue: boolean; lastSeg: number };
   desktopAimPointerId: number | null;
-  desktopGuidedPointerId: number | null;
   cancelHovered: boolean;
 }
 
@@ -176,7 +174,6 @@ export class InputManager {
       specialRadial: createIdleSpecialRadialState(),
       pcPaint: { pointerId: null, paintValue: true, lastSeg: -1 },
       desktopAimPointerId: null,
-      desktopGuidedPointerId: null,
       cancelHovered: false,
     };
 
@@ -291,7 +288,6 @@ export class InputManager {
     this.resetSpecialRadial();
     this.live.pcPaint.pointerId = null;
     this.live.desktopAimPointerId = null;
-    this.live.desktopGuidedPointerId = null;
     this.live.cancelHovered = false;
 
     const state = this.getState();
@@ -404,12 +400,6 @@ export class InputManager {
         if (hex) recallSpecificHex(state, player, hex);
         break;
       }
-      case 'guided_waypoint':
-        issueGuidedWaypoint(state, player, action.wx, action.wy, action.withRipple);
-        break;
-      case 'guided_clear':
-        clearGuidedWaypoint(state, player);
-        break;
     }
   }
 
@@ -542,7 +532,7 @@ export class InputManager {
       touchHoldingAttack: this.live.atk.pointerId !== null,
       touchAimAngle: player.aimAngle,
       touchAimStrength: player.aimStrength,
-      desktopHoldingGuided: this.live.desktopGuidedPointerId !== null,
+      desktopHoldingGuided: false,
     };
   }
 
@@ -781,9 +771,6 @@ export class InputManager {
         this.updateDashDrag(px, py);
       } else if (e.pointerId === this.live.desktopAimPointerId) {
         this.updateDesktopAim(px, py);
-      } else if (e.pointerId === this.live.desktopGuidedPointerId) {
-        const w = this.screenToWorld(px, py);
-        this.dispatchAction({ kind: 'guided_waypoint', wx: w.wx, wy: w.wy, withRipple: false });
       } else if (e.pointerId === this.live.pcPaint.pointerId) {
         for (const slot of this.live.pcLayout.hexSlots) {
           if (pointInRect(px, py, slot)) {
@@ -993,14 +980,10 @@ export class InputManager {
     const { player } = state;
     const pc = this.live.pcLayout;
 
-    // Right-click: cancel active aim, clear guided waypoint, recall targeted hex, or smart recall
+    // Right-click: cancel active aim, recall targeted hex, or smart recall
     if (e.button === 2) {
       if (player.isAiming || player.isAimingDash) {
         this.cancelActiveAim();
-        return;
-      }
-      if (player.attackAnim?.type === 'ranged' && player.attackAnim.phase === 'guided' && player.attackAnim.hasCmd) {
-        this.dispatchAction({ kind: 'guided_clear' });
         return;
       }
       const world = this.screenToWorld(px, py);
@@ -1074,12 +1057,9 @@ export class InputManager {
       }
     }
 
-    // Guided Spear Click-to-Command (fly-through!)
-    if (getActiveStance(player) === 'ranged' && player.attackAnim?.type === 'ranged' && player.attackAnim.phase === 'guided') {
-      this.live.desktopGuidedPointerId = e.pointerId;
-      const world = this.screenToWorld(px, py);
-      this.dispatchAction({ kind: 'guided_waypoint', wx: world.wx, wy: world.wy, withRipple: true });
-      this.canvas.setPointerCapture(e.pointerId);
+    // Blink Spear (Ranged Ulti #1): left-click teleports immediately to the spear!
+    if (isRangedBlinkActive(player)) {
+      this.dispatchAction({ kind: 'attack', angle: player.facing, strength: 1.0 });
       return;
     }
 
@@ -1263,15 +1243,11 @@ export class InputManager {
         getActiveStance(player) === 'defense' &&
         !isDefenseFortressActive(player) &&
         !isDefenseHexWallActive(player);
-      const isGuidedRanged =
-        getActiveStance(player) === 'ranged' &&
-        player.attackAnim?.type === 'ranged' &&
-        player.attackAnim.phase === 'guided';
       if (isPureDefense) {
         // Pure defense pad only rotates the shield; releasing never triggers an attack.
       } else if (canceled) {
         state.events.push({ type: 'sfx', kind: 'cancel' });
-      } else if (!isGuidedRanged) {
+      } else {
         this.dispatchAction({ kind: 'attack', angle: player.aimAngle, strength: player.aimStrength });
       }
     } else if (e.pointerId === this.live.dash.pointerId) {
@@ -1296,8 +1272,6 @@ export class InputManager {
       } else {
         this.dispatchAction({ kind: 'attack', angle: player.aimAngle, strength: player.aimStrength });
       }
-    } else if (e.pointerId === this.live.desktopGuidedPointerId) {
-      this.live.desktopGuidedPointerId = null;
     } else if (e.pointerId === this.live.arc.pointerId) {
       this.live.arc.pointerId = null;
       this.live.arc.lastSeg = -1;

@@ -72,9 +72,7 @@ export type PvPAction =
   | { kind: 'special'; skillId?: SpecialSkillId; angle?: number; strength?: number }
   | { kind: 'set_special_skill'; modeId: AttackModeId; skillId: SpecialSkillId }
   | { kind: 'smart_recall' }
-  | { kind: 'recall_hex'; hexId: number }
-  | { kind: 'guided_waypoint'; wx: number; wy: number; withRipple: boolean }
-  | { kind: 'guided_clear' };
+  | { kind: 'recall_hex'; hexId: number };
 
 export interface ContinuousInputPacket {
   seq: number;
@@ -147,7 +145,7 @@ export interface SerializedHex {
 
 export interface SerializedRangedAnim {
   type: 'ranged';
-  phase: 'out' | 'guided' | 'ricochet' | 'return';
+  phase: 'out' | 'blink_out' | 'blink_planted' | 'ricochet' | 'return';
   angle: number;
   anchorX: number;
   anchorY: number;

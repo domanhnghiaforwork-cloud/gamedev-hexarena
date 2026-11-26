@@ -137,3 +137,14 @@ Tài liệu ghi nhận quá trình phát triển nhánh **Giai đoạn 3** trong
   * **Camera, Đồ họa & Đồng bộ PvP:** Tự động zoom-out nhẹ và dịch tâm camera theo vùng nón, hiển thị tia ngắm laze cắt vật cản, chấm đạn (ô #4 hình thoi vàng), vệt đạn rực sáng và đồng bộ đầy đủ qua `protocol.ts`, `pvpInterpolator.ts` & `server/index.ts`.
 * **Kiểm thử:** Bổ sung `tests/sniperStage.test.ts` kiểm chứng khóa vùng nón `±32°`, đứng im, chỉ viên thứ 4 cường hóa, làm chậm 35% trong `0.6s`, chặn vật cản/khiên theo 4 quy tắc, thu hồi đa hướng khi hủy bằng Lướt và đồng bộ snapshot PvP.
 * **Cân bằng Ulti #1 Đánh xa (*Ngự Thương Độc Lập*):** Giảm một nửa hệ số sát thương khi điều hướng (`1.35× → 0.675×`, cập nhật tại `guidedSpear.ts` & `combat.ts`).
+
+---
+
+## v3.9 — 26/11/2026: Thay thế Ulti #1 Đánh xa thành `Phi Thương Biến Ảnh` (`ranged:blink_spear`)
+
+* **Thay thế *Ngự Thương Độc Lập* bằng *Phi Thương Biến Ảnh* (`src/core/attacks/ranged/specials/blinkSpear.ts`):**
+  * Giải quyết triệt để tình trạng auto-pilot 8 giây khó chịu thiếu counterplay: xóa hoàn toàn `guidedSpear.ts` và pha `guided` trong `simulation.ts`, `combat.ts`, `botController.ts`, `inputManager.ts` & `server/index.ts`.
+  * **Cơ chế mới:** Kích hoạt sẽ phi thẳng thương năng lượng tầm `620 px` (`1080 px/s × S^-0.5`, sát thương bay qua `1.15×`, tối đa 1 hit thân), tự động cắm đất an toàn tại điểm chạm khiên/vật cản/tối đa tầm trong **`3.5s`** (hồi chiêu `16s`).
+  * **Tái kích hoạt Dịch chuyển + Sóng xung kích:** Bấm lại Ulti (`C`) hoặc Đánh (`Chuột trái` / `BIẾN` trên Mobile) bất kỳ lúc nào khi thương đang bay hoặc đang cắm đất sẽ **dịch chuyển tức thì** tới vị trí an toàn tại cây thương, thu hồi ngay vũ khí về tay và phát sóng xung kích bán kính `135 px` gây **`48` sát thương máu**, **`35` sát thương mảnh** và đẩy lùi mạnh (`340`). Nếu hết `3.5s` không dịch chuyển, thương tự bay về tay.
+  * **Hiển thị & Bot AI (`entityRenderer.ts`, `hudRenderer.ts`, `botController.ts`):** Vẽ dây nối plasma + vòng báo sóng xung kích `135 px` + bộ đếm `BIẾN ẢNH · Xs`, nút Mobile đổi nhãn `BIẾN`, và Bot AI biết kích hoạt biến ảnh áp sát hoặc thoát hiểm.
+* **Kiểm thử:** Cập nhật `tests/attackRegistry.test.ts`, `tests/specialSelector.test.ts` và `tests/physics.test.ts` kiểm chứng phi thương cắm đất an toàn, dịch chuyển gây sóng xung kích và tự bay về khi hết giờ.

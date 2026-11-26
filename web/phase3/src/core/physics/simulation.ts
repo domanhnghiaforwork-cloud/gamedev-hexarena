@@ -8,7 +8,7 @@ import {
   createDefaultLoadout,
 } from '../constants';
 import { applyHexDurabilityLoss, damageFighterBody, resolveCombatCollisions } from './combat';
-import { angleDiff, axialToLocal, clamp, dist, lerp } from '../math/hexMath';
+import { axialToLocal, clamp, dist, lerp } from '../math/hexMath';
 import {
   constrainToHexArena,
   generateObstacles,
@@ -20,6 +20,7 @@ import {
 } from '../world/obstacles';
 import { setFighterForm } from '../attacks/common';
 import { launchHex } from '../attacks/loose/attack';
+import { plantBlinkSpearAt } from '../attacks/ranged/specials/blinkSpear';
 import {
   SNIPER_RETURN_SPEED,
   launchHexSniperReturn,
@@ -39,6 +40,7 @@ import {
   isDefenseFortressActive,
   isInsideLooseGravityField,
   isLooseGravityFieldActive,
+  isRangedBlinkActive,
   isRangedSniperActive,
   isSlotKey,
 } from '../world/structure';
@@ -121,7 +123,7 @@ export function updateFighter(
   fighter: Fighter,
   opponent: Fighter,
   dt: number,
-  guidedInput?: GuidedSteerInput,
+  _guidedInput?: GuidedSteerInput,
 ): void {
   // Smooth scale interpolation preserving exact edge-locking every frame
   fighter.currentScale = lerp(fighter.currentScale, fighter.targetScale, Math.min(1, dt * 13));
@@ -309,7 +311,8 @@ export function updateFighter(
       const spearSlow = isInsideLooseGravityField(opponent, anim.anchorX, anim.anchorY, R * 1.1)
         ? LOOSE_GRAVITY_SLOW_FACTOR
         : 1.0;
-      if (anim.phase === 'out') {
+      if (anim.phase === 'out' || anim.phase === 'blink_out') {
+        const isBlink = anim.phase === 'blink_out';
         const prevX = anim.anchorX;
         const prevY = anim.anchorY;
         const energyRatio = anim.initialEnergy > 0 ? clamp(anim.energy / anim.initialEnergy, 0.25, 1.0) : 1.0;
@@ -347,127 +350,37 @@ export function updateFighter(
         }
 
         if (wallHitPos) {
-          anim.anchorX = prevX;
-          anim.anchorY = prevY;
-          anim.phase = 'return';
-          anim.energy = anim.initialEnergy * 0.5;
-          anim.hitBody = false;
-          anim.hitHexIds.clear();
-          state.events.push({ type: 'sparks', x: wallHitPos.x, y: wallHitPos.y, color: '#fbbf24', count: 10, speed: 220, size: 3.0 });
-          state.events.push({ type: 'sfx', kind: 'bounce' });
-        } else if (anim.traveled >= anim.maxDist) {
-          anim.phase = 'return';
-          anim.energy = anim.initialEnergy * 0.5;
-          anim.hitBody = false;
-          anim.hitHexIds.clear();
-          state.events.push({ type: 'sfx', kind: 'recall' });
-        }
-      } else if (anim.phase === 'guided') {
-        if (anim.guidedHitBodyCd > 0) anim.guidedHitBodyCd = Math.max(0, anim.guidedHitBodyCd - dt);
-        if (anim.guidedStunTimer > 0) anim.guidedStunTimer = Math.max(0, anim.guidedStunTimer - dt);
-
-        let targetX = opponent.x;
-        let targetY = opponent.y;
-        let isManual = false;
-        let isPointSeek = false;
-
-        if (!fighter.isAI && guidedInput?.mode === 'desktop') {
-          if (anim.hasCmd) {
-            isManual = true;
-            isPointSeek = true;
-            targetX = anim.cmdX;
-            targetY = anim.cmdY;
-          }
-        } else if (fighter.isAI && anim.hasCmd) {
-          isManual = true;
-          isPointSeek = true;
-          targetX = anim.cmdX;
-          targetY = anim.cmdY;
-        } else if (!fighter.isAI && guidedInput?.mode === 'touch' && guidedInput.touchHoldingAttack) {
-          isManual = true;
-          const projDist = 90 + 210 * clamp(guidedInput.touchAimStrength, 0.25, 1.0);
-          const clampedPt = {
-            x: anim.anchorX + Math.cos(guidedInput.touchAimAngle) * projDist,
-            y: anim.anchorY + Math.sin(guidedInput.touchAimAngle) * projDist,
-          };
-          constrainToHexArena(clampedPt, R * 1.6 + 8);
-          targetX = clampedPt.x;
-          targetY = clampedPt.y;
-        }
-
-        const dToTarget = dist(anim.anchorX, anim.anchorY, targetX, targetY);
-        if (isPointSeek && anim.hasCmd && dToTarget <= 28) {
-          // Fly straight THROUGH the clicked waypoint without braking or stopping (100% Mobile parity!)
-          if (!guidedInput?.desktopHoldingGuided) {
-            anim.hasCmd = false;
-            isManual = false;
-            isPointSeek = false;
-          }
-        }
-
-        let desiredAng = anim.angle;
-        if (isManual && !isPointSeek && guidedInput) {
-          desiredAng = guidedInput.touchAimAngle;
-        } else if (isPointSeek) {
-          // If cursor is still held right on top of the weapon, keep flying straight through instead of spinning/stopping
-          desiredAng = dToTarget > 28
-            ? Math.atan2(targetY - anim.anchorY, targetX - anim.anchorX)
-            : anim.angle;
-        } else if (dToTarget > 14) {
-          desiredAng = Math.atan2(targetY - anim.anchorY, targetX - anim.anchorX);
-        } else {
-          desiredAng = Math.atan2(opponent.y - anim.anchorY, opponent.x - anim.anchorX);
-        }
-
-        anim.targetX = isManual ? targetX : opponent.x;
-        anim.targetY = isManual ? targetY : opponent.y;
-        anim.targetAngle = desiredAng;
-        anim.isManualSteer = isManual;
-
-        const turnRate = anim.guidedStunTimer > 0 ? 2.4 : 7.0;
-        const diff = angleDiff(anim.angle, desiredAng);
-        anim.angle += clamp(diff, -turnRate * dt, turnRate * dt);
-        weaponAngle = anim.angle;
-
-        // Constant full guidedSpeed on BOTH PC & Mobile (no PC hover/braking advantage!)
-        const baseGuidedSpd = anim.guidedSpeed ?? clamp(anim.outSpeed * 0.56, 320, 440);
-        const speedFactor = anim.guidedStunTimer > 0 ? 0.50 : 1.0;
-        const spd = baseGuidedSpd * speedFactor * spearSlow;
-        anim.anchorX += Math.cos(anim.angle) * spd * dt;
-        anim.anchorY += Math.sin(anim.angle) * spd * dt;
-        anim.altitude = lerp(anim.altitude, 0, Math.min(1, dt * 10));
-
-        if (anim.energy < anim.initialEnergy) {
-          anim.energy = Math.min(anim.initialEnergy, anim.energy + anim.initialEnergy * 0.85 * dt);
-        }
-
-        for (const obs of state.obstacles) {
-          const col = resolveCircleObstacle(anim.anchorX, anim.anchorY, R * 1.4, obs);
-          if (col) {
-            anim.anchorX += col.nx * col.push;
-            anim.anchorY += col.ny * col.push;
-            const vx = Math.cos(anim.angle);
-            const vy = Math.sin(anim.angle);
-            const dot = vx * col.nx + vy * col.ny;
-            if (dot < 0) {
-              anim.angle = Math.atan2(vy - 2 * dot * col.ny, vx - 2 * dot * col.nx);
-              state.events.push({ type: 'sparks', x: anim.anchorX, y: anim.anchorY, color: '#c084fc', count: 6, speed: 170, size: 2.5 });
-              state.events.push({ type: 'sfx', kind: 'bounce' });
-            }
-          }
-        }
-        const pt = { x: anim.anchorX, y: anim.anchorY };
-        const wallB = constrainToHexArena(pt, R * 1.6 + 8);
-        anim.anchorX = pt.x;
-        anim.anchorY = pt.y;
-        if (wallB) {
-          const vx = Math.cos(anim.angle);
-          const vy = Math.sin(anim.angle);
-          const dot = vx * wallB.nx + vy * wallB.ny;
-          if (dot < 0) {
-            anim.angle = Math.atan2(vy - 2 * dot * wallB.ny, vx - 2 * dot * wallB.nx);
+          if (isBlink) {
+            plantBlinkSpearAt(state, anim, prevX, prevY);
+          } else {
+            anim.anchorX = prevX;
+            anim.anchorY = prevY;
+            anim.phase = 'return';
+            anim.energy = anim.initialEnergy * 0.5;
+            anim.hitBody = false;
+            anim.hitHexIds.clear();
+            state.events.push({ type: 'sparks', x: wallHitPos.x, y: wallHitPos.y, color: '#fbbf24', count: 10, speed: 220, size: 3.0 });
             state.events.push({ type: 'sfx', kind: 'bounce' });
           }
+        } else if (anim.traveled >= anim.maxDist) {
+          if (isBlink) {
+            plantBlinkSpearAt(state, anim, anim.anchorX, anim.anchorY);
+          } else {
+            anim.phase = 'return';
+            anim.energy = anim.initialEnergy * 0.5;
+            anim.hitBody = false;
+            anim.hitHexIds.clear();
+            state.events.push({ type: 'sfx', kind: 'recall' });
+          }
+        }
+      } else if (anim.phase === 'blink_planted') {
+        weaponAngle = anim.angle;
+        anim.altitude = 0;
+        if (!isRangedBlinkActive(fighter)) {
+          anim.phase = 'return';
+          anim.energy = anim.initialEnergy * 0.5;
+          anim.hitBody = false;
+          anim.hitHexIds.clear();
         }
       } else if (anim.phase === 'ricochet') {
         anim.ricochetTimer -= dt;

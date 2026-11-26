@@ -99,7 +99,7 @@ export interface AttackModeDefinition {
 export const BUILTIN_SPECIAL_SKILL_IDS = {
   LOOSE_GRAVITY_FIELD: 'loose:gravity_field',
   LOOSE_PRISM_WEB: 'loose:prism_web',
-  RANGED_GUIDED_SPEAR: 'ranged:guided_spear',
+  RANGED_BLINK_SPEAR: 'ranged:blink_spear',
   RANGED_SNIPER_STAGE: 'ranged:sniper_stage',
   MELEE_PARRY_DISARM: 'melee:parry_disarm',
   DEFENSE_COUNTER_FORTRESS: 'defense:counter_fortress',

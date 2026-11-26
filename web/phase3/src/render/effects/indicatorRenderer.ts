@@ -8,6 +8,7 @@ import {
   getActiveStance,
   isDefenseFortressActive,
   isDefenseHexWallActive,
+  isRangedBlinkActive,
   isRangedSniperActive,
 } from '@core/world/structure';
 import type { LiveInputState } from '@input/inputManager';
@@ -21,12 +22,9 @@ export function renderSkillIndicator(
   isCanceling: boolean,
   isDesktop = false,
 ): void {
-  // Hide normal aiming indicator during Guided Ranged Special or Sniper Stage (replaced by custom stage visual!)
+  // Hide normal aiming indicator during Blink Spear or Sniper Stage (replaced by custom stage visual!)
   const stance = getActiveStance(f);
-  if (
-    isRangedSniperActive(f) ||
-    (stance === 'ranged' && f.attackAnim?.type === 'ranged' && f.attackAnim.phase === 'guided')
-  ) {
+  if (isRangedSniperActive(f) || isRangedBlinkActive(f)) {
     return;
   }
 
@@ -254,8 +252,7 @@ export function renderDesktopReticle(
   wy: number,
   style: ReticleStyle,
 ): void {
-  const stance = getActiveStance(player);
-  const isGuided = stance === 'ranged' && player.attackAnim?.type === 'ranged' && player.attackAnim.phase === 'guided';
+  const isBlink = isRangedBlinkActive(player);
   const S = player.currentScale;
   const R = BASE_HEX_RADIUS * S;
 
@@ -279,7 +276,7 @@ export function renderDesktopReticle(
     ctx.setLineDash([]);
   }
 
-  const color = isGuided ? '#e879f9' : '#38bdf8';
+  const color = isBlink ? '#e879f9' : '#38bdf8';
   ctx.strokeStyle = color;
   ctx.fillStyle = color;
 

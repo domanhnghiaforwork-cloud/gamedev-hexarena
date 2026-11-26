@@ -439,7 +439,7 @@ export function renderHelpModal(mount: HTMLElement, pcConfig: PCControlConfig, o
                 <li><strong>${formatKeyLabel(kb.formLoose)} / ${formatKeyLabel(kb.formSlot1)} / ${formatKeyLabel(kb.formSlot2)} / ${formatKeyLabel(kb.formSlot3)}</strong> hoặc <strong>${formatKeyLabel(kb.cycleForm)}</strong>: Đổi Đơn lẻ &amp; 3 Cấu hình</li>
                 <li><strong>${formatKeyLabel(kb.cycleRot)}</strong>: Đổi Xoay trục · <strong>${formatKeyLabel(kb.cycleScale)}</strong> ${pcConfig.mouseWheelScale ? '/ Cuộn chuột' : ''}: Đổi Co giãn</li>
                 <li><strong>${formatKeyLabel(kb.cycleFire)}</strong>: Kiểu phóng · <strong>${formatKeyLabel(kb.selectAll)}</strong>: Chọn/Bỏ hết mảnh · <strong>${formatKeyLabel(kb.special)}</strong>: Dùng Ulti · <strong>${formatKeyLabel(kb.cycleSpecial)}</strong>: Đổi Ulti (Giữ mở vòng)</li>
-                <li><strong>Chuột trái</strong>: Đánh / Click bay qua (Ngự Thương) · <strong>Chuột phải</strong>: Thu hồi / Thu mảnh dưới chuột / Hủy ngắm</li>
+                <li><strong>Chuột trái</strong>: Đánh / Dịch chuyển Biến Ảnh &amp; Bắn tỉa · <strong>Chuột phải</strong>: Thu hồi / Thu mảnh dưới chuột / Hủy ngắm</li>
               </ul>
             </div>
             <div class="help-card">

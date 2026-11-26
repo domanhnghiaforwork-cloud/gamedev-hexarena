@@ -271,7 +271,7 @@ export class LoadoutEditorModal {
               <div class="guide-subhead">3 trạng thái tấn công kế thừa</div>
               <div class="guide-rule-list">
                 <div class="guide-rule-item">
-                  <strong style="color:#c084fc;">Đánh xa:</strong> Phi thẳng cả khối theo hướng ngắm rồi tự bay về 2× tốc độ (50% sát thương). Chiêu đặc biệt: <strong>Ngự Thương Độc Lập</strong> (bay tự do, click bay xuyên qua điểm).
+                  <strong style="color:#c084fc;">Đánh xa:</strong> Phi thẳng cả khối theo hướng ngắm rồi tự bay về 2× tốc độ (50% sát thương). Chiêu đặc biệt: <strong>Phi Thương Biến Ảnh</strong> (phi xuyên cắm đất 3.5s, bấm lại dịch chuyển kèm sóng xung kích) / <strong>Thương Kích Lục Giác</strong>.
                 </div>
                 <div class="guide-rule-item">
                   <strong style="color:#fbbf24;">Đánh gần:</strong> Vung chém vòng cung rộng trước mặt. Chiêu đặc biệt: <strong>Phản Chém Tước Mảnh</strong> (bật ngược và tước mảnh đối thủ).

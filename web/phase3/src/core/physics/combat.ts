@@ -15,7 +15,7 @@ import {
 } from '../world/obstacles';
 import { triggerShieldMiniPulse } from '../attacks/defense/specials/counterFortress';
 import { performMeleeParrySteal } from '../attacks/melee/specials/parryDisarm';
-import { GUIDED_SPEAR_DMG_MULT } from '../attacks/ranged/specials/guidedSpear';
+import { BLINK_SPEAR_PASS_DMG_MULT, plantBlinkSpearAt } from '../attacks/ranged/specials/blinkSpear';
 import {
   SNIPER_SLOW_DURATION,
   SNIPER_SLOW_FACTOR,
@@ -384,17 +384,18 @@ function resolveAttacksVsWalls(state: MatchState): void {
     const attR = BASE_HEX_RADIUS * att.currentScale;
     const attStance = getActiveStance(att);
 
-    // 1. Ranged Thrown / Guided Spear vs Enemy Walls
+    // 1. Ranged Thrown / Blink Spear vs Enemy Walls
     if (
       attStance === 'ranged' &&
       att.attackAnim &&
       att.attackAnim.type === 'ranged' &&
-      att.attackAnim.phase !== 'ricochet'
+      att.attackAnim.phase !== 'ricochet' &&
+      att.attackAnim.phase !== 'blink_planted'
     ) {
       const anim = att.attackAnim;
       const isReturn = anim.phase === 'return';
-      const isGuided = anim.phase === 'guided';
-      const passDmgMult = isReturn ? 0.5 : isGuided ? GUIDED_SPEAR_DMG_MULT : 1.0;
+      const isBlinkOut = anim.phase === 'blink_out';
+      const passDmgMult = isReturn ? 0.5 : isBlinkOut ? BLINK_SPEAR_PASS_DMG_MULT : 1.0;
       const spearHexes = att.hexes.filter((h) => h.state === 'ASSEMBLED');
       const dirX = Math.cos(anim.angle);
       const dirY = Math.sin(anim.angle);
@@ -404,8 +405,7 @@ function resolveAttacksVsWalls(state: MatchState): void {
         for (const wh of w.hexes) {
           if (wh.broken) continue;
           const hitKey = -(10000 + w.id * 16 + wh.id);
-          if (!isGuided && anim.hitHexIds.has(hitKey)) continue;
-          if (isGuided && anim.guidedStunTimer > 0) continue;
+          if (anim.hitHexIds.has(hitKey)) continue;
 
           const hitAh = spearHexes.find(
             (ah) => !isCircleBlockedByObstacle(state.obstacles, ah.x, ah.y, attR * 0.35) && dist(ah.x, ah.y, wh.x, wh.y) < (attR + wallR) * 0.92,
@@ -419,12 +419,8 @@ function resolveAttacksVsWalls(state: MatchState): void {
 
           if (anim.energy < rWall) {
             applyWallHexDurabilityLoss(state, wh, w.ownerId, Math.round(attStats.damage * 1.2 * passDmgMult));
-            if (isGuided) {
-              anim.anchorX -= dirX * 18;
-              anim.anchorY -= dirY * 18;
-              anim.angle = Math.atan2(-dirY, -dirX) + (Math.random() - 0.5) * 0.7;
-              anim.guidedStunTimer = 0.25;
-              anim.hitHexIds.clear();
+            if (isBlinkOut) {
+              plantBlinkSpearAt(state, anim, anim.anchorX - dirX * 14, anim.anchorY - dirY * 14);
             } else {
               anim.energy = 0;
               if (!isReturn) {
@@ -579,12 +575,18 @@ export function resolveCombatCollisions(state: MatchState): void {
     const defR = BASE_HEX_RADIUS * def.currentScale;
     const attStance = getActiveStance(att);
 
-    // A. RANGED STANCE THROWN / GUIDED WEAPON
-    if (attStance === 'ranged' && att.attackAnim && att.attackAnim.type === 'ranged' && att.attackAnim.phase !== 'ricochet') {
+    // A. RANGED STANCE THROWN / BLINK SPEAR
+    if (
+      attStance === 'ranged' &&
+      att.attackAnim &&
+      att.attackAnim.type === 'ranged' &&
+      att.attackAnim.phase !== 'ricochet' &&
+      att.attackAnim.phase !== 'blink_planted'
+    ) {
       const anim = att.attackAnim;
       const isReturn = anim.phase === 'return';
-      const isGuided = anim.phase === 'guided';
-      const passDmgMult = isReturn ? 0.5 : isGuided ? GUIDED_SPEAR_DMG_MULT : 1.0;
+      const isBlinkOut = anim.phase === 'blink_out';
+      const passDmgMult = isReturn ? 0.5 : isBlinkOut ? BLINK_SPEAR_PASS_DMG_MULT : 1.0;
       const spearHexes = att.hexes.filter((h) => h.state === 'ASSEMBLED');
       const dirX = Math.cos(anim.angle);
       const dirY = Math.sin(anim.angle);
@@ -599,11 +601,10 @@ export function resolveCombatCollisions(state: MatchState): void {
             isHexStolen(dh) ||
             dh.state === 'SNIPER_SPENT' ||
             dh.state === 'SNIPER_RETURN' ||
-            (!isGuided && anim.hitHexIds.has(dh.id))
+            anim.hitHexIds.has(dh.id)
           ) {
             continue;
           }
-          if (isGuided && anim.guidedStunTimer > 0) continue;
           const d = dist(ah.x, ah.y, dh.x, dh.y);
           if (d < (attR + defR) * 0.92) {
             if (segmentIntersectsAnyObstacle(state.obstacles, ah.x, ah.y, dh.x, dh.y, 0)) continue;
@@ -620,8 +621,9 @@ export function resolveCombatCollisions(state: MatchState): void {
           anim.energy <= 0 ||
           stoppedThisFrame ||
           anim.phase === 'ricochet' ||
+          anim.phase === 'blink_planted' ||
           dh.state === 'BROKEN' ||
-          (!isGuided && anim.hitHexIds.has(dh.id))
+          anim.hitHexIds.has(dh.id)
         ) {
           continue;
         }
@@ -645,11 +647,8 @@ export function resolveCombatCollisions(state: MatchState): void {
             rx = nx;
             ry = ny;
           }
-          if (isGuided) {
-            anim.angle = Math.atan2(ry, rx);
-            anim.guidedStunTimer = 0.22;
-            anim.anchorX += nx * 16;
-            anim.anchorY += ny * 16;
+          if (isBlinkOut) {
+            plantBlinkSpearAt(state, anim, anim.anchorX + nx * 12, anim.anchorY + ny * 12);
           } else {
             anim.phase = 'ricochet';
             anim.ricochetTimer = 0.18;
@@ -683,12 +682,8 @@ export function resolveCombatCollisions(state: MatchState): void {
           def.kbY += dirY * 135;
           stoppedThisFrame = true;
 
-          if (isGuided) {
-            anim.anchorX -= dirX * 18;
-            anim.anchorY -= dirY * 18;
-            anim.angle = Math.atan2(-dirY, -dirX) + (Math.random() - 0.5) * 0.8;
-            anim.guidedStunTimer = 0.28;
-            anim.hitHexIds.clear();
+          if (isBlinkOut) {
+            plantBlinkSpearAt(state, anim, anim.anchorX - dirX * 14, anim.anchorY - dirY * 14);
           } else {
             anim.energy = 0;
             if (!isReturn) {
@@ -716,8 +711,7 @@ export function resolveCombatCollisions(state: MatchState): void {
       }
 
       // Step 2 (Rule 1): Ground Hitbox Ring ONLY if residual kinetic energy remains & unobstructed!
-      const canHitBody = isGuided ? anim.guidedHitBodyCd <= 0 : !anim.hitBody;
-      if (!stoppedThisFrame && anim.energy > 0 && anim.phase !== 'ricochet' && canHitBody) {
+      if (!stoppedThisFrame && anim.energy > 0 && anim.phase !== 'ricochet' && anim.phase !== 'blink_planted' && !anim.hitBody) {
         for (const ah of spearHexes) {
           if (isCircleBlockedByObstacle(state.obstacles, ah.x, ah.y, attR * 0.35)) continue;
           const dBody = dist(ah.x, ah.y, def.x, def.y);
@@ -725,8 +719,7 @@ export function resolveCombatCollisions(state: MatchState): void {
             if (segmentIntersectsAnyObstacle(state.obstacles, ah.x, ah.y, def.x, def.y, 0)) continue;
             if (isBodyShieldedAlongPath(ah.x, ah.y, def, defR, state.walls)) continue;
 
-            if (isGuided) anim.guidedHitBodyCd = 0.45;
-            else anim.hitBody = true;
+            anim.hitBody = true;
 
             const energyRatio = anim.initialEnergy > 0 ? clamp(anim.energy / anim.initialEnergy, 0.22, 1.0) : 1.0;
             damageFighterBody(state, att, ah, def, 1.25 * passDmgMult * energyRatio);

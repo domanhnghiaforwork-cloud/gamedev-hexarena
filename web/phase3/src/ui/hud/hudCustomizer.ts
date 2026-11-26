@@ -343,7 +343,7 @@ export class HUDCustomizerController {
                   <input id="pcWheel" type="checkbox" ${this.draftPC.mouseWheelScale ? 'checked' : ''} />
                 </label>
                 <div style="font-size:11px;color:#94a3b8;">
-                  Chuột trái: Tấn công / Click bay xuyên qua (Ngự Thương).<br/>
+                  Chuột trái: Tấn công / Kích hoạt Biến Ảnh &amp; Bắn tỉa.<br/>
                   Chuột phải: Thu hồi / Thu mảnh dưới chuột / Hủy ngắm.
                 </div>
               </div>

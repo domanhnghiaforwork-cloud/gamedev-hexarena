@@ -11,6 +11,7 @@ import {
   getActiveBlueprint,
   isDefenseFortressActive,
   isDefenseHexWallActive,
+  isRangedBlinkActive,
   isRangedSniperActive,
   isSlotKey,
 } from '@core/world/structure';
@@ -189,62 +190,71 @@ export function renderMobileCanvasHUD(
   const isDefenseStance = bp?.stance === 'defense';
   const isFortressActive = isDefenseStance && isDefenseFortressActive(player);
   const isHexWallActive = isDefenseStance && isDefenseHexWallActive(player);
+  const isBlinkActive = isRangedBlinkActive(player);
   const isSniperActive = isRangedSniperActive(player);
   const isNextFourthShot = isSniperActive && (player.specialActive?.shotsFired ?? 0) + 1 === 4;
-  const atkLabel = isSniperActive
-    ? isNextFourthShot
-      ? 'BẮN #4'
-      : 'BẮN'
-    : isFortressActive
-      ? 'XUNG'
-      : isHexWallActive
-        ? 'TƯỜNG'
-        : bp
-          ? STANCE_META[bp.stance].attackLabel
-          : 'PHÓNG';
+  const atkLabel = isBlinkActive
+    ? 'BIẾN'
+    : isSniperActive
+      ? isNextFourthShot
+        ? 'BẮN #4'
+        : 'BẮN'
+      : isFortressActive
+        ? 'XUNG'
+        : isHexWallActive
+          ? 'TƯỜNG'
+          : bp
+            ? STANCE_META[bp.stance].attackLabel
+            : 'PHÓNG';
   ctx.save();
   ctx.globalAlpha = m.atk.opacity;
   ctx.beginPath();
   ctx.arc(m.atk.cx, m.atk.cy, m.atk.r, 0, Math.PI * 2);
-  ctx.fillStyle = isNextFourthShot
-    ? 'rgba(251, 191, 36, 0.44)'
-    : isSniperActive
-      ? 'rgba(232, 121, 249, 0.36)'
-      : isFortressActive
-        ? 'rgba(16, 185, 129, 0.42)'
-        : isHexWallActive
-          ? 'rgba(45, 212, 191, 0.36)'
-          : isDefenseStance
-            ? 'rgba(15, 23, 42, 0.66)'
-            : 'rgba(14, 116, 144, 0.42)';
+  ctx.fillStyle = isBlinkActive
+    ? 'rgba(192, 132, 252, 0.38)'
+    : isNextFourthShot
+      ? 'rgba(251, 191, 36, 0.44)'
+      : isSniperActive
+        ? 'rgba(232, 121, 249, 0.36)'
+        : isFortressActive
+          ? 'rgba(16, 185, 129, 0.42)'
+          : isHexWallActive
+            ? 'rgba(45, 212, 191, 0.36)'
+            : isDefenseStance
+              ? 'rgba(15, 23, 42, 0.66)'
+              : 'rgba(14, 116, 144, 0.42)';
   ctx.fill();
-  ctx.strokeStyle = isNextFourthShot
-    ? '#fbbf24'
-    : isSniperActive
-      ? '#e879f9'
-      : isFortressActive
-        ? '#34d399'
-        : isHexWallActive
-          ? '#2dd4bf'
-          : isDefenseStance
-            ? 'rgba(52, 211, 153, 0.55)'
-            : '#38bdf8';
-  ctx.lineWidth = isSniperActive || isFortressActive || isHexWallActive ? 3.0 : 2.4;
+  ctx.strokeStyle = isBlinkActive
+    ? '#c084fc'
+    : isNextFourthShot
+      ? '#fbbf24'
+      : isSniperActive
+        ? '#e879f9'
+        : isFortressActive
+          ? '#34d399'
+          : isHexWallActive
+            ? '#2dd4bf'
+            : isDefenseStance
+              ? 'rgba(52, 211, 153, 0.55)'
+              : '#38bdf8';
+  ctx.lineWidth = isBlinkActive || isSniperActive || isFortressActive || isHexWallActive ? 3.0 : 2.4;
   ctx.stroke();
 
   ctx.beginPath();
   ctx.arc(live.atk.knobX, live.atk.knobY, m.atk.r * 0.58, 0, Math.PI * 2);
-  ctx.fillStyle = isNextFourthShot
-    ? 'rgba(251, 191, 36, 0.94)'
-    : isSniperActive
-      ? 'rgba(232, 121, 249, 0.90)'
-      : isFortressActive
-        ? 'rgba(52, 211, 153, 0.90)'
-        : isHexWallActive
-          ? 'rgba(45, 212, 191, 0.88)'
-          : isDefenseStance
-            ? 'rgba(16, 185, 129, 0.45)'
-            : 'rgba(56, 189, 248, 0.85)';
+  ctx.fillStyle = isBlinkActive
+    ? 'rgba(192, 132, 252, 0.90)'
+    : isNextFourthShot
+      ? 'rgba(251, 191, 36, 0.94)'
+      : isSniperActive
+        ? 'rgba(232, 121, 249, 0.90)'
+        : isFortressActive
+          ? 'rgba(52, 211, 153, 0.90)'
+          : isHexWallActive
+            ? 'rgba(45, 212, 191, 0.88)'
+            : isDefenseStance
+              ? 'rgba(16, 185, 129, 0.45)'
+              : 'rgba(56, 189, 248, 0.85)';
   ctx.fill();
   ctx.fillStyle = isDefenseStance && !isFortressActive && !isHexWallActive ? '#d1fae5' : '#082f49';
   ctx.font = canvasFont(900, Math.max(10, Math.round(12 * m.baseScale)));

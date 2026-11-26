@@ -12,12 +12,15 @@ import { applyHexDurabilityLoss, computeEffectiveImpactAngle, damageHex, isBodyS
 import { createMatchState, stepSimulation } from '@core/physics/simulation';
 import {
   executeFighterAttack,
-  issueGuidedWaypoint,
   setFighterForm,
   setFighterRotMode,
   setFighterScale,
   triggerFighterSpecial,
 } from '@attacks/index';
+import {
+  BLINK_SHOCKWAVE_BODY_DMG,
+  BLINK_SPEAR_DURATION,
+} from '@attacks/ranged/specials/blinkSpear';
 import {
   getEffectiveHexStats,
   getLooseGravityFieldRadius,
@@ -172,56 +175,64 @@ describe('Power-Law Scaling & 4-Rule Emergent Physics', () => {
     expect(enemy.hp).toBeLessThan(hpBefore);
   });
 
-  it('flies straight THROUGH clicked PC waypoint during Guided Ranged Special without braking or stopping', () => {
+  it('throws Phi Thương Biến Ảnh, plants safely, teleports with arrival shockwave on reactivate, and returns on expire', () => {
     const state = createMatchState();
-    state.obstacles = []; // Clear obstacles for deterministic straight pass-through check
+    state.obstacles = [];
     const { player, enemy } = state;
     setFighterForm(state, player, 'slot1'); // Ranged Stance
-    player.x = -200;
-    player.y = 0;
-    player.facing = 0;
-    enemy.x = 350;
-    enemy.y = 0;
-
-    expect(triggerFighterSpecial(state, player)).toBe(true);
-    expect(player.attackAnim?.type).toBe('ranged');
-    const anim = player.attackAnim!;
-    if (anim.type !== 'ranged') throw new Error('Expected ranged attackAnim');
-
-    // Click a waypoint straight ahead at (0, 0)
-    const clickX = 0;
-    const clickY = 0;
-    expect(issueGuidedWaypoint(state, player, clickX, clickY, false)).toBe(true);
-    expect(anim.hasCmd).toBe(true);
-
-    const desktopInput = {
-      mode: 'desktop' as const,
-      touchHoldingAttack: false,
-      touchAimAngle: 0,
-      touchAimStrength: 0,
-      desktopHoldingGuided: false,
-    };
-
-    const expectedSpeed = anim.guidedSpeed ?? 380;
-    let passedWaypoint = false;
-    let maxSpeedDrop = 0;
-
-    for (let i = 0; i < 60; i++) {
-      const prevX = anim.anchorX;
-      const prevY = anim.anchorY;
-      stepSimulation(state, FIXED_DT, desktopInput);
-      const stepSpeed = Math.hypot(anim.anchorX - prevX, anim.anchorY - prevY) / FIXED_DT;
-      maxSpeedDrop = Math.max(maxSpeedDrop, expectedSpeed - stepSpeed);
-      if (anim.anchorX > clickX + 40) {
-        passedWaypoint = true;
-        break;
-      }
+    setFighterForm(state, enemy, 'loose');
+    for (const h of enemy.hexes) {
+      h.state = 'BROKEN';
+      h.cooldown = 99;
     }
 
-    // Must fly completely PAST the clicked point without braking or stopping!
-    expect(passedWaypoint).toBe(true);
-    expect(anim.hasCmd).toBe(false);
-    expect(maxSpeedDrop).toBeLessThan(15); // Constant full guidedSpeed (zero arrival braking!)
+    player.x = -250;
+    player.y = 0;
+    player.facing = 0;
+    enemy.x = 320;
+    enemy.y = 0;
+
+    // 1. Cast Phi Thương Biến Ảnh -> spear flies out in 'blink_out'
+    expect(triggerFighterSpecial(state, player, applyHexDurabilityLoss, undefined, { angle: 0 })).toBe(true);
+    expect(player.attackAnim?.type).toBe('ranged');
+    if (player.attackAnim?.type !== 'ranged') throw new Error('Expected ranged attackAnim');
+    expect(player.attackAnim.phase).toBe('blink_out');
+
+    // Step until spear hits max range (~620px from -250 -> ~370, near enemy at 320) or plants
+    for (let i = 0; i < 45; i++) {
+      stepSimulation(state, FIXED_DT);
+      if (player.attackAnim?.type === 'ranged' && player.attackAnim.phase === 'blink_planted') break;
+    }
+    expect(player.attackAnim?.type).toBe('ranged');
+    if (player.attackAnim?.type === 'ranged') {
+      expect(player.attackAnim.phase).toBe('blink_planted');
+    }
+
+    // 2. Reactivate (or Attack) while planted -> teleports to spear, clears specialActive, deals 48 shockwave damage
+    const spearX = player.attackAnim.anchorX;
+    enemy.x = spearX + 60;
+    enemy.y = 0;
+    const hpBeforeBlink = enemy.hp;
+    expect(triggerFighterSpecial(state, player, applyHexDurabilityLoss)).toBe(true);
+    expect(player.specialActive).toBeNull();
+    expect(player.attackAnim).toBeNull();
+    expect(player.x).toBeCloseTo(spearX, 2);
+    expect(hpBeforeBlink - enemy.hp).toBe(BLINK_SHOCKWAVE_BODY_DMG);
+    expect(enemy.kbX).toBeGreaterThan(100);
+
+    // 3. Expiration without teleporting transitions spear smoothly to 'return'
+    player.specialCooldown = 0;
+    player.x = -200;
+    player.y = 0;
+    expect(triggerFighterSpecial(state, player, applyHexDurabilityLoss, undefined, { angle: 0 })).toBe(true);
+    for (let i = 0; i < Math.ceil((BLINK_SPEAR_DURATION + 0.1) / FIXED_DT); i++) {
+      stepSimulation(state, FIXED_DT);
+      if (!player.specialActive) break;
+    }
+    expect(player.specialActive).toBeNull();
+    if (player.attackAnim?.type === 'ranged') {
+      expect(player.attackAnim.phase).toBe('return');
+    }
   });
 
   it('expands Loose Gravity Field +40% over Phase 2 baseline, places orbit hexes at midpoint, and slows enemy entities by 80%', () => {
